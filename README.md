@@ -72,10 +72,15 @@ The site has to be served over HTTP, because opening `index.html` directly block
 
 ## Hosting / auto-updates
 
-1. Merge to the default branch. Scheduled workflows only run from the default branch.
-2. Go to **Settings → Pages → Source** and choose **GitHub Actions**.
-3. The workflow then updates the data every Tuesday and redeploys the site. You can also run it
-   on demand from the **Actions** tab ("Update NFL data" → *Run workflow*).
+The site lives in `web/`, so GitHub Pages must deploy it with the workflow. "Deploy from a branch" won't work:
+that only serves the repo root or `/docs`, and at the root you just get this README.
+
+1. **Settings → Pages → Build and deployment → Source**: choose **GitHub Actions**.
+2. **Actions → Update NFL data → Run workflow** (on the default branch) to fetch the data and deploy.
+   It also redeploys on any push that changes `web/`, and runs on its own every Tuesday.
+3. Open `https://<user>.github.io/<repo>/`.
+
+Scheduled runs and Pages deployments only happen on the repo's default branch.
 
 ## Logos
 

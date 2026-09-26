@@ -7,9 +7,9 @@ on:
     # (e.g. after Thursday Night Football) never adds a partial week.
     - cron: "0 14 * * 2"
   workflow_dispatch:
+  # Redeploy the site whenever the site or this workflow changes.
   push:
-    branches: [main]
-    paths: ["web/**"]
+    paths: ["web/**", ".github/workflows/update-data.yml"]
 
 permissions:
   contents: write
@@ -22,6 +22,9 @@ concurrency:
 
 jobs:
   update:
+    # Pages only accepts deployments from the default branch.
+    # (Scheduled runs always use the default branch; their payload has no repository info.)
+    if: github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
