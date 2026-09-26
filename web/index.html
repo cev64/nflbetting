@@ -17,6 +17,7 @@
         <button role="tab" data-view="league" aria-selected="true">League</button>
         <button role="tab" data-view="matchup" aria-selected="false">Matchup</button>
         <button role="tab" data-view="ats" aria-selected="false">vs Spread</button>
+        <button role="tab" data-view="spots" aria-selected="false">Spots</button>
       </nav>
     </div>
   </header>
@@ -123,9 +124,30 @@
         </table>
       </div>
       <p class="note">
-        Covers use nflverse's closing spread from each team's side; pushes count in the record but not in cover %.
+        Covers use nflverse's spread line from each team's side; pushes count in the record but not in cover %.
         <b>Won/Even/Lost TO battle</b> splits each team's ATS record by its turnover margin in that game. The Games,
         Span and Venue filters apply here too. The 50% line is break-even before the vig (about 52.4% at −110).
+      </p>
+    </section>
+    <section id="view-spots" class="view" hidden>
+      <div class="card verdict-card">
+        <h3 class="card-title">How the spread signals have done</h3>
+        <p id="spots-verdict" class="card-sub"></p>
+        <div class="table-scroll"><table id="spots-backtest" class="stats"></table></div>
+      </div>
+      <h2 class="section-title" id="spots-title"></h2>
+      <div id="spots" class="spots"></div>
+      <div class="card">
+        <h3 class="card-title">Flagged games this season</h3>
+        <div class="table-scroll"><table id="spots-history" class="stats log"></table></div>
+      </div>
+      <p class="note">
+        <b>Power edge</b>: each team's point differential, minus 4 points per turnover of margin (turnovers are mostly
+        luck), blended with last season and pulled toward average. It adds 1.5 points for home field and compares the
+        result to the spread. <b>Turnover fade</b>: backs the team whose season turnover margin is much worse than its
+        opponent's, betting on regression. Signals use only games played before kickoff. The market line is nflverse's
+        number as of the last data refresh (Tuesday) and moves during the week, so compare the model's fair line with
+        your sportsbook's current line.
       </p>
     </section>
   </main>

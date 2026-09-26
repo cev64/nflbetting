@@ -19,7 +19,7 @@ It also has two fumble-luck columns:
 
 Fumble recoveries are close to a coin flip, so a team well above or below 50% is a regression candidate.
 
-**vs Spread**: turnover margin against covering the spread (closing lines from nflverse).
+**vs Spread**: turnover margin against covering the spread (nflverse spread lines).
 - Cover rate when a team won, tied, or lost the turnover battle.
 - Cover rate by the game's final turnover margin (−3 or worse through +3 or better).
 - Cover rate by the *entering-the-game* turnover edge: the team's season-to-date TO diff/game minus its opponent's.
@@ -28,6 +28,25 @@ Fumble recoveries are close to a coin flip, so a team well above or below 50% is
 - Switch between the selected season and all loaded seasons pooled together.
 
 ATS records and each game's line and cover margin also appear in the league table, the matchup view, and the game logs.
+
+**Spots**: automatic spread signals for the upcoming week's games (`backend/model.py`).
+- *Power edge*: each team's point differential minus 4 points per turnover of margin, blended with last season,
+  pulled toward average, plus 1.5 points for home field. It gives a model "fair line"; a gap of 3+ points from the
+  market flags a lean.
+- *Turnover fade*: when one team's turnover diff/game is 1.0+ better than its opponent's (both with 3+ games),
+  it leans on the worse-turnover team, betting on regression.
+- *Both agree*: both signals point at the same team.
+
+Every signal is backtested on all seasons on disk (2021–2025) and tracked live in the current season. The site
+shows those records beside the picks. **So far none of them beats the 52.4% needed at −110.** They're all near
+50%, because the spread already prices in turnover luck. Treat them as a screen, not as bets.
+
+### Where the betting lines come from
+
+Spreads and totals come from nflverse's schedule data (`nflreadpy.load_schedules()`, from the `games` dataset
+maintained in [nflverse/nfldata](https://github.com/nflverse/nfldata)). Its docs don't say which sportsbook the
+lines come from, so treat them as a market consensus. For upcoming games, the line is whatever nflverse had
+when the Tuesday refresh ran, so check your own book's current number against the model's fair line.
 
 **Upcoming games**: the next week's slate with the spread, the total, and each team's turnover diff per game.
 Click a game to open the matchup.
@@ -62,7 +81,7 @@ The 2025 totals match nflverse's official team stats (380 INTs, 248 of 249 lost 
 pip install -r backend/requirements.txt
 
 python backend/fetch_data.py               # current season
-python backend/fetch_data.py --since 2020  # backfill 2020 through the current season
+python backend/fetch_data.py --since 2021  # backfill 2021 through the current season
 python backend/fetch_data.py --seasons 2024 2025
 
 python -m http.server 8000 -d web          # then open http://localhost:8000
@@ -95,9 +114,12 @@ one, drop in `web/logos/LA.png`.
 | field | meaning |
 |---|---|
 | `week`, `type`, `date`, `team`, `opp`, `home`, `pf`, `pa` | game info from the team's point of view (`type` is REG/WC/DIV/CON/SB) |
-| `line` | the team's closing spread (negative = favored); it covered if `pf - pa + line > 0` |
+| `line` | the team's spread from nflverse (negative = favored); it covered if `pf - pa + line > 0` |
 | `int_thrown`, `fum_lost`, `fumbles` | giveaways, plus total fumbles (lost or not) |
 | `int_made`, `fum_rec`, `opp_fumbles` | takeaways, plus total opponent fumbles |
+
+`model.json` holds the spread signals: backtest and live records per signal, graded flags for the
+current season, and `spots` for the upcoming week.
 
 `upcoming` lists the games in the week after the published data, with `spread_line` (positive = home favored),
 `total_line`, and the score if it has already been played.

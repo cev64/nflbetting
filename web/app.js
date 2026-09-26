@@ -378,7 +378,7 @@ function renderLog(sel, s) {
       <td class="sep key">${ga}</td><td>${g.int_thrown}</td><td>${g.fum_lost}</td>
       <td class="sep key ${d > 0 ? "pos" : d < 0 ? "neg" : ""}">${d > 0 ? "+" : ""}${d}</td></tr>`;
   });
-  $(sel).innerHTML = `<thead><tr><th>Wk</th><th>Opp</th><th>Result</th><th title="Team's closing spread">Line</th><th title="Against the spread: result and cover margin">ATS</th><th class="sep" title="Takeaways">TA</th><th title="Interceptions made">INT</th><th title="Fumbles recovered">FR</th><th class="sep" title="Giveaways">GA</th><th title="Interceptions thrown">INT</th><th title="Fumbles lost">FL</th><th class="sep">Diff</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+  $(sel).innerHTML = `<thead><tr><th>Wk</th><th>Opp</th><th>Result</th><th title="Team's spread (nflverse)">Line</th><th title="Against the spread: result and cover margin">ATS</th><th class="sep" title="Takeaways">TA</th><th title="Interceptions made">INT</th><th title="Fumbles recovered">FR</th><th class="sep" title="Giveaways">GA</th><th title="Interceptions thrown">INT</th><th title="Fumbles lost">FL</th><th class="sep">Diff</th></tr></thead><tbody>${rows.join("")}</tbody>`;
 }
 
 // ---------- chart: cumulative TO diff by game ----------
@@ -635,6 +635,127 @@ function renderATS() {
     .join("");
 }
 
+// ---------- Spots: spread signals for this week's games ----------
+
+let model = null; // data/model.json, built by backend/model.py
+
+// "KC −3.5" style, from a team's own line (negative = favored).
+function teamLine(team, line) {
+  if (line == null) return `${team} –`;
+  if (line === 0) return `${team} PK`;
+  return `${team} ${line > 0 ? "+" : "−"}${Math.abs(line)}`;
+}
+// Favorite-side text for a home-view number (positive = home favored).
+function favLine(home, away, homeFav) {
+  if (homeFav == null) return "–";
+  if (Math.abs(homeFav) < 0.05) return "Pick'em";
+  return homeFav > 0 ? teamLine(home, -round1(homeFav)) : teamLine(away, -round1(-homeFav));
+}
+const round1 = (v) => Math.round(v * 10) / 10;
+const rec = (r) => (r && r.w + r.l + r.p ? `${r.w}-${r.l}${r.p ? `-${r.p}` : ""}` : "–");
+const pctTxt = (r) => (r && r.pct != null ? `${(r.pct * 100).toFixed(1)}%` : "–");
+
+const SIGNAL_NAMES = { power: "Power edge", to_fade: "Turnover fade", strong: "Both agree" };
+
+function renderSpots() {
+  const box = $("#spots");
+  if (!model) {
+    box.innerHTML = `<p class="muted">No model data yet. Run backend/fetch_data.py.</p>`;
+    return;
+  }
+  const be = model.break_even;
+  const [b0, b1] = model.backtest_seasons || ["?", "?"];
+
+  // Backtest + live record per signal
+  const rows = Object.entries(model.signals)
+    .map(([key, s]) => {
+      const beat = s.backtest.pct != null && s.backtest.pct >= be;
+      return `<tr><td class="sig"><b>${SIGNAL_NAMES[key]}</b><div class="muted">${s.rule}</div></td>
+        <td class="sep">${rec(s.backtest)}</td><td class="${beat ? "pos" : ""}">${pctTxt(s.backtest)}</td>
+        <td class="sep">${rec(s.live)}</td><td>${pctTxt(s.live)}</td></tr>`;
+    })
+    .join("");
+  $("#spots-backtest").innerHTML = `<thead><tr><th>Signal</th><th class="sep">${b0}–${b1} ATS</th><th>Win %</th>
+    <th class="sep">${model.season} so far</th><th>Win %</th></tr></thead><tbody>${rows}</tbody>`;
+  const best = Math.max(...Object.values(model.signals).map((s) => s.backtest.pct || 0));
+  $("#spots-verdict").innerHTML =
+    best >= be
+      ? `At least one signal has cleared the ${(be * 100).toFixed(1)}% break-even at −110 in the backtest. Samples are still small, so size bets accordingly.`
+      : `<b>No signal has beaten the ${(be * 100).toFixed(1)}% break-even at −110</b> over ${b0}–${b1}; all of them are close to a coin flip.
+         The spread already prices in turnover luck. Use these flags to find games worth a closer look, not as automatic bets.`;
+
+  const isCurrent = state.season === model.season;
+  const spots = model.spots || [];
+  $("#spots-title").textContent = spots.length
+    ? `Week ${spots[0].week} spots · ${model.season} data through ${weekLabel(data && isCurrent ? data.last_week : spots[0].week - 1)}`
+    : "No upcoming games";
+  box.innerHTML = spots.map(spotCard).join("") || `<p class="muted">No upcoming games in the schedule.</p>`;
+
+  // 2026 flagged games already graded
+  const hist = [...(model.live_history || [])].reverse();
+  $("#spots-history").innerHTML = hist.length
+    ? `<thead><tr><th>Wk</th><th>Game</th><th>Line</th><th>Signals</th><th>Result</th></tr></thead><tbody>${hist
+        .map((h) => {
+          const cells = Object.entries(h.signals)
+            .map(([k, side]) => {
+              const won = h.home_ats === "P" ? null : (h.home_ats === "W") === (side === h.home);
+              return `<span class="chip ${won == null ? "" : won ? "chip-win" : "chip-loss"}">${SIGNAL_NAMES[k]}: ${side} ${
+                won == null ? "push" : won ? "✓" : "✗"
+              }</span>`;
+            })
+            .join(" ");
+          return `<tr><td>${h.week}</td><td>${h.away} @ ${h.home}</td><td>${favLine(h.home, h.away, h.spread_line)}</td><td class="chips">${cells}</td><td>${
+            h.home_ats === "P" ? "Push" : `${h.home_ats === "W" ? h.home : h.away} covered`
+          }</td></tr>`;
+        })
+        .join("")}</tbody>`
+    : `<tbody><tr><td class="muted">No ${model.season} games have been flagged and graded yet.</td></tr></tbody>`;
+}
+
+function spotCard(s) {
+  const final = s.home_score != null;
+  const edgeSide = s.edge == null ? null : s.edge > 0 ? s.home : s.away;
+  const sideLine = (t) => (t === s.home ? -s.spread_line : s.spread_line);
+  const chips = [];
+  if (s.signals.power) chips.push(`<span class="chip chip-on">Power edge → ${teamLine(s.signals.power, sideLine(s.signals.power))}</span>`);
+  else chips.push(`<span class="chip">Power edge: ${s.edge == null ? "no line" : `${Math.abs(s.edge).toFixed(1)} pts (needs ${model.params.power_edge})`}</span>`);
+  if (s.signals.to_fade) chips.push(`<span class="chip chip-on">Turnover fade → ${teamLine(s.signals.to_fade, sideLine(s.signals.to_fade))}</span>`);
+  else if (Math.min(s.home_games, s.away_games) < model.params.min_games)
+    chips.push(`<span class="chip">Turnover fade: needs ${model.params.min_games} games (${s.away_games}/${s.home_games})</span>`);
+  else
+    chips.push(`<span class="chip">Turnover fade: gap ${Math.abs(s.home_to_pg - s.away_to_pg).toFixed(2)}/g (needs ${model.params.to_gap})</span>`);
+
+  let verdict;
+  if (s.strength === 2) verdict = `<span class="tag tag-strong">Both signals</span> ${teamLine(s.lean, sideLine(s.lean))}`;
+  else if (s.lean) verdict = `<span class="tag tag-lean">Lean</span> ${teamLine(s.lean, sideLine(s.lean))}`;
+  else if (Object.keys(s.signals).length) verdict = `<span class="tag">Signals disagree</span>`;
+  else verdict = `<span class="tag">No spot</span>`;
+
+  let result = "";
+  if (final && s.lean && s.spread_line != null) {
+    const m = s.home_score - s.away_score - s.spread_line; // home ATS margin
+    const won = m === 0 ? null : (m > 0) === (s.lean === s.home);
+    result = `<div class="spot-result ${won == null ? "" : won ? "pos" : "neg"}">Final ${s.away_score}-${s.home_score} · ${
+      won == null ? "push" : won ? "lean covered" : "lean lost"
+    } (graded when the week is published)</div>`;
+  } else if (final) result = `<div class="spot-result muted">Final ${s.away_score}-${s.home_score}</div>`;
+
+  return `<div class="spot ${s.strength === 2 ? "spot-strong" : s.lean ? "spot-lean" : ""}">
+    <div class="spot-head">
+      <div class="spot-teams">${logo(s.away)}<b>${s.away}</b><span class="muted">@</span>${logo(s.home)}<b>${s.home}</b></div>
+      <div class="muted">${gameWhen(s)}${!final && s.time ? ` · ${s.time} ET` : ""}</div>
+    </div>
+    <div class="spot-lines">
+      <div><span class="muted">Market</span><b>${favLine(s.home, s.away, s.spread_line)}</b></div>
+      <div><span class="muted">Model fair line</span><b>${favLine(s.home, s.away, s.fair_spread_line)}</b></div>
+      <div><span class="muted">Edge</span><b>${s.edge == null ? "–" : `${Math.abs(s.edge).toFixed(1)} pts → ${edgeSide}`}</b></div>
+    </div>
+    <div class="chips">${chips.join("")}</div>
+    <div class="spot-verdict">${verdict}</div>
+    ${result}
+  </div>`;
+}
+
 // ---------- routing & wiring ----------
 
 function writeHash() {
@@ -646,7 +767,7 @@ function writeHash() {
 
 function readHash() {
   const [view, q] = location.hash.slice(1).split("?");
-  if (["league", "matchup", "ats"].includes(view)) state.view = view;
+  if (["league", "matchup", "ats", "spots"].includes(view)) state.view = view;
   const p = new URLSearchParams(q || "");
   if (p.get("season")) state.season = Number(p.get("season"));
   if (p.get("a")) state.a = p.get("a");
@@ -659,6 +780,7 @@ function render() {
   $("#view-league").hidden = state.view !== "league";
   $("#view-matchup").hidden = state.view !== "matchup";
   $("#view-ats").hidden = state.view !== "ats";
+  $("#view-spots").hidden = state.view !== "spots";
   document.querySelectorAll("#mode-seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === state.mode));
   const upd = new Date(data.updated);
   $("#updated").textContent = `${data.season} season · through ${weekLabel(data.last_week)} · updated ${upd.toLocaleString(undefined, {
@@ -667,7 +789,8 @@ function render() {
   renderUpcoming(L);
   if (state.view === "league") renderLeague(L);
   else if (state.view === "matchup") renderMatchup(L);
-  else renderATS();
+  else if (state.view === "ats") renderATS();
+  else renderSpots();
   writeHash();
 }
 
@@ -756,6 +879,7 @@ async function init() {
     if (!state.seasons.includes(state.season)) state.season = state.seasons[0];
     $("#f-season").innerHTML = state.seasons.map((s) => `<option value="${s}" ${s === state.season ? "selected" : ""}>${s}</option>`).join("");
     data = await loadSeason(state.season);
+    model = await loadJSON("data/model.json").catch(() => null);
     wire();
     render();
   } catch (err) {

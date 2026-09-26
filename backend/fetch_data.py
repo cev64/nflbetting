@@ -22,6 +22,8 @@ from pathlib import Path
 import nflreadpy as nfl
 import polars as pl
 
+from model import model_report
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "web" / "data"
 
 # nflverse play-by-play and schedules use "LA" for the Rams; load_teams() lists
@@ -261,6 +263,22 @@ def main() -> None:
         print(f"{season}: {len(data['games'])} team-games through week {data['last_week']} -> {out}")
 
     write_index()
+    write_model(current)
+
+
+def write_model(current: int) -> None:
+    """Backtest the spread signals on every season on disk and score this week."""
+    seasons = {
+        int(p.stem): json.loads(p.read_text()) for p in DATA_DIR.glob("*.json") if p.stem.isdigit()
+    }
+    if not seasons:
+        return
+    current = min(current, max(seasons))
+    report = model_report(seasons, current)
+    report["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (DATA_DIR / "model.json").write_text(json.dumps(report, separators=(",", ":")) + "\n")
+    live = report["signals"]["power"]["live"]
+    print(f"model: {len(report['spots'])} games scored for {current}; power signal live {live['w']}-{live['l']}")
 
 
 if __name__ == "__main__":
