@@ -179,3 +179,20 @@ button.ghost { border: 1px solid var(--border); background: var(--surface); colo
   .matchup-pick select { min-width: 140px; }
   .cmp-head, .cmp-row { padding: 8px 10px; }
 }
+
+/* ATS view */
+.ats-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.ats-head .seg { width: fit-content; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 14px; margin-bottom: 14px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.tile-label { font-size: 12px; color: var(--text-2); }
+.tile-value { font-size: 32px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 2px 0; }
+.tile-sub { font-size: 12px; color: var(--text-3); }
+.ats-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 14px; }
+.ats-charts > .card { min-width: 0; }
+.card-sub { margin: -4px 0 10px; font-size: 12px; color: var(--text-3); }
+.chart .cap { font-size: 11px; font-weight: 600; fill: var(--text); }
+.chart .xl { font-size: 11px; fill: var(--text-2); }
+.chart .xn { font-size: 10px; fill: var(--text-3); }
+.chart .ref { stroke: var(--text-3); stroke-width: 1; }
+.chart .bar:hover path { opacity: .85; }

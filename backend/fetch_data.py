@@ -7,13 +7,16 @@ Usage:
     python backend/fetch_data.py                   # current season only
     python backend/fetch_data.py --seasons 2024 2025
     python backend/fetch_data.py --since 2020      # 2020 through current season
+
+Only fully completed weeks are published (see last_complete_week), so running
+this mid-week never adds Thursday/Sunday games before Monday night is final.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import nflreadpy as nfl
@@ -60,14 +63,17 @@ def fumble_counts(pbp: pl.DataFrame) -> pl.DataFrame:
 
 def build_season(season: int) -> dict:
     full_sched = nfl.load_schedules([season])
-    played = pl.col("home_score").is_not_null() & pl.col("away_score").is_not_null()
-    sched = full_sched.filter(played)
-    if sched.is_empty():
-        raise RuntimeError(f"No completed games found for {season}")
-
     pbp = nfl.load_pbp([season])
 
+    cutoff = last_complete_week(full_sched, set(pbp["game_id"].unique().to_list()))
+    if cutoff is None:
+        raise RuntimeError(f"No completed weeks found for {season}")
+    played = pl.col("home_score").is_not_null() & pl.col("away_score").is_not_null()
+    sched = full_sched.filter(played & (pl.col("week") <= cutoff))
+
     # One row per team per game, from that team's point of view.
+    # `line` is the team's spread in betting notation (negative = favored);
+    # nflverse spread_line is from the home side with positive = home favored.
     cols = ["game_id", "season", "week", "game_type", "gameday"]
     home = sched.select(
         *cols,
@@ -76,6 +82,7 @@ def build_season(season: int) -> dict:
         pl.lit(True).alias("home"),
         pl.col("home_score").alias("pf"),
         pl.col("away_score").alias("pa"),
+        (-pl.col("spread_line")).alias("line"),
     )
     away = sched.select(
         *cols,
@@ -84,6 +91,7 @@ def build_season(season: int) -> dict:
         pl.lit(False).alias("home"),
         pl.col("away_score").alias("pf"),
         pl.col("home_score").alias("pa"),
+        pl.col("spread_line").alias("line"),
     )
     games = pl.concat([home, away])
 
@@ -130,6 +138,7 @@ def build_season(season: int) -> dict:
             "home": r["home"],
             "pf": r["pf"],
             "pa": r["pa"],
+            "line": r["line"],
             # Giveaways (offense / ball security)
             "int_thrown": r["int"],
             "fum_lost": r["fl"],
@@ -160,21 +169,39 @@ def build_season(season: int) -> dict:
     return {
         "season": season,
         "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "last_week": int(games.filter(pl.col("game_type") == "REG")["week"].max() or 0),
+        "last_week": cutoff,
         "teams": teams,
         "games": records,
-        "upcoming": upcoming_games(full_sched.filter(~played)),
+        "upcoming": upcoming_games(full_sched, cutoff + 1),
     }
 
 
-def upcoming_games(unplayed: pl.DataFrame) -> list[dict]:
-    """Games in the next unplayed week, with the closing-ish betting lines.
+def last_complete_week(sched: pl.DataFrame, pbp_games: set[str]) -> int | None:
+    """Latest week W such that every game in weeks 1..W is final and in the pbp.
 
+    Only whole weeks are published, so a Thursday game never gives some teams
+    an extra game over the rest of the league before the week wraps on Monday.
+    A game with no score that is more than a week old (e.g. the cancelled
+    2022 BUF-CIN game) is treated as never happening rather than as pending.
+    """
+    stale = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
+    cutoff = None
+    for (week,), wk in sched.sort("week").group_by("week", maintain_order=True):
+        for r in wk.iter_rows(named=True):
+            done = r["home_score"] is not None and r["game_id"] in pbp_games
+            if not done and r["gameday"] >= stale:
+                return cutoff
+        cutoff = week
+    return cutoff
+
+
+def upcoming_games(sched: pl.DataFrame, week: int) -> list[dict]:
+    """The slate for the week after the published data, with betting lines.
+
+    Games already played that week (e.g. Thursday night) are included with
+    their final score; their stats appear once the whole week is published.
     nflverse spread_line is from the home team's view: positive = home favored.
     """
-    if unplayed.is_empty():
-        return []
-    next_week = unplayed["week"].min()
     return [
         {
             "game_id": r["game_id"],
@@ -186,8 +213,10 @@ def upcoming_games(unplayed: pl.DataFrame) -> list[dict]:
             "away": r["away_team"],
             "spread_line": r["spread_line"],
             "total_line": r["total_line"],
+            "home_score": r["home_score"],
+            "away_score": r["away_score"],
         }
-        for r in unplayed.filter(pl.col("week") == next_week)
+        for r in sched.filter(pl.col("week") == week)
         .sort("gameday", "gametime")
         .iter_rows(named=True)
     ]

@@ -13,6 +13,8 @@ const state = {
   a: null,
   b: null,
   sort: { key: "diff", dir: "desc" },
+  atsSample: "season", // "season" | "all"
+  atsSort: { key: "ats_pct", dir: "desc" },
 };
 const cache = {};
 let data = null; // current season payload
@@ -32,8 +34,8 @@ async function loadSeason(season) {
   return cache[season];
 }
 
-function teamGames(team) {
-  let g = data.games.filter((x) => x.team === team);
+function teamGames(team, d = data) {
+  let g = d.games.filter((x) => x.team === team);
   if (state.type === "REG") g = g.filter((x) => x.type === "REG");
   else if (state.type === "POST") g = g.filter((x) => x.type !== "REG");
   if (state.venue === "home") g = g.filter((x) => x.home);
@@ -43,8 +45,32 @@ function teamGames(team) {
   return g;
 }
 
-function aggregate(team) {
-  const games = teamGames(team);
+// Against the spread, from the team's side. `line` is the team's spread
+// (negative = favored), so it covers when final margin + line > 0.
+function ats(g) {
+  if (g.line == null) return null;
+  const margin = g.pf - g.pa + g.line;
+  return { margin, res: margin > 0 ? "W" : margin < 0 ? "L" : "P" };
+}
+const toDiff = (g) => g.int_made + g.fum_rec - g.int_thrown - g.fum_lost;
+
+function atsTally(games) {
+  const t = { w: 0, l: 0, p: 0, n: 0, margin: 0 };
+  for (const g of games) {
+    const a = ats(g);
+    if (!a) continue;
+    t[a.res.toLowerCase()]++;
+    t.n++;
+    t.margin += a.margin;
+  }
+  t.pct = t.w + t.l ? t.w / (t.w + t.l) : null;
+  t.avg = t.n ? t.margin / t.n : null;
+  t.rec = t.n ? `${t.w}-${t.l}${t.p ? `-${t.p}` : ""}` : "–";
+  return t;
+}
+
+function aggregate(team, d = data) {
+  const games = teamGames(team, d);
   const s = { team, games, gp: games.length, w: 0, l: 0, t: 0 };
   const keys = ["int_made", "fum_rec", "int_thrown", "fum_lost", "fumbles", "opp_fumbles", "pf", "pa"];
   for (const k of keys) s[k] = 0;
@@ -59,6 +85,9 @@ function aggregate(team) {
   s.diff = s.take - s.give;
   s.kept_pct = s.fumbles ? (s.fumbles - s.fum_lost) / s.fumbles : null;
   s.opp_rec_pct = s.opp_fumbles ? s.fum_rec / s.opp_fumbles : null;
+  s.ats = atsTally(games);
+  s.ats_pct = s.ats.pct;
+  s.ats_margin = s.ats.avg;
   return s;
 }
 
@@ -73,6 +102,8 @@ const METRICS = {
   diff: { label: "TO differential", short: "Diff", better: 1, count: true, signed: true },
   kept_pct: { label: "Own fumbles kept", short: "Fum kept %", better: 1, pct: true },
   opp_rec_pct: { label: "Opp fumbles recovered", short: "Opp fum rec %", better: 1, pct: true },
+  ats_pct: { label: "ATS cover %", short: "Cover %", better: 1, pct: true },
+  ats_margin: { label: "Avg cover margin", short: "Cover margin", better: 1, signed: true, avg: true },
 };
 
 function value(s, key) {
@@ -88,14 +119,14 @@ function fmt(v, key) {
   const m = METRICS[key] || {};
   if (v == null || Number.isNaN(v)) return "–";
   if (m.pct) return `${Math.round(v * 100)}%`;
-  let out = m.count && state.mode === "pg" ? v.toFixed(2) : String(Math.round(v * 100) / 100);
+  let out = m.count && state.mode === "pg" ? v.toFixed(2) : m.avg ? v.toFixed(1) : String(Math.round(v * 100) / 100);
   if (m.signed && v > 0) out = `+${out}`;
   return out;
 }
 
 function leagueStats() {
   const teams = Object.keys(data.teams).sort();
-  const stats = teams.map(aggregate).filter((s) => s.gp > 0);
+  const stats = teams.map((t) => aggregate(t)).filter((s) => s.gp > 0);
   // Ranks per metric: 1 = best.
   const ranks = {};
   for (const key of Object.keys(METRICS)) {
@@ -118,7 +149,16 @@ function leagueStats() {
   return { stats, ranks, avg, byTeam: Object.fromEntries(stats.map((s) => [s.team, s])) };
 }
 
-const logo = (t) => `<img class="logo" src="${data.teams[t]?.logo || ""}" alt="" loading="lazy">`;
+// Local logos live in web/logos/<abbr>.png; fall back to nflverse's (ESPN) logo.
+const logo = (t) => {
+  const remote = data.teams[t]?.logo || "";
+  return `<img class="logo" src="logos/${t}.png" alt="" loading="lazy" onerror="this.onerror=null;this.src='${remote}'">`;
+};
+const signed = (v, dp = 1) => (v == null ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(dp)}`);
+const posneg = (v) => (v > 0 ? "pos" : v < 0 ? "neg" : "");
+function weekLabel(w) {
+  return { 19: "Wild Card round", 20: "Divisional round", 21: "Conference championships", 22: "Super Bowl" }[w] || `week ${w}`;
+}
 const ordinal = (n) => {
   const s = ["th", "st", "nd", "rd"], v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
@@ -150,6 +190,9 @@ const LEAGUE_COLS = [
   { key: "diff", group: "", sep: true, key_col: true },
   { key: "kept_pct", group: "Fumble luck", sep: true },
   { key: "opp_rec_pct", group: "Fumble luck" },
+  { key: "ats_pct", group: "Against the spread", sep: true, label: "ATS", title: "Record against the spread (W-L-Push)", text: (s) => s.ats.rec },
+  { key: "ats_pct", group: "Against the spread" },
+  { key: "ats_margin", group: "Against the spread" },
 ];
 
 function renderLeague(L) {
@@ -165,9 +208,9 @@ function renderLeague(L) {
     `<tr class="group"><th></th>${groups.map((g) => `<th colspan="${g.span}" class="${g.sep ? "sep" : ""}">${g.name}</th>`).join("")}</tr>` +
     `<tr><th class="sortable" data-key="team" ${sk === "team" ? `aria-sort="${dir}ending"` : ""}>Team</th>${LEAGUE_COLS.map(
       (c) =>
-        `<th class="sortable ${c.sep ? "sep" : ""}" data-key="${c.key}" title="${METRICS[c.key]?.label || "Games played"}" ${
-          sk === c.key ? `aria-sort="${dir}ending"` : ""
-        }>${METRICS[c.key]?.short || c.label}</th>`
+        `<th class="sortable ${c.sep ? "sep" : ""}" data-key="${c.key}" title="${c.title || METRICS[c.key]?.label || "Games played"}" ${
+          sk === c.key && !c.text ? `aria-sort="${dir}ending"` : ""
+        }>${c.label || METRICS[c.key]?.short}</th>`
     ).join("")}</tr>`;
 
   const rows = [...L.stats].sort((x, y) => {
@@ -186,7 +229,8 @@ function renderLeague(L) {
         const v = value(s, c.key);
         const cls = [c.sep ? "sep" : "", c.key_col ? "key" : "", c.key === "diff" ? (v > 0 ? "pos" : v < 0 ? "neg" : "") : ""].join(" ");
         const style = c.key_col ? shade(v, c.key, L) : "";
-        return `<td class="${cls}" style="${style}">${c.key === "gp" ? s.gp : fmt(v, c.key)}</td>`;
+        const txt = c.text ? c.text(s) : c.key === "gp" ? s.gp : fmt(v, c.key);
+        return `<td class="${cls}" style="${style}">${txt}</td>`;
       }).join("");
       return `<tr><td class="team"><span class="rank">${i + 1}</span>${logo(s.team)}<a href="#" data-team="${s.team}" title="${data.teams[s.team].name}">${s.team}</a></td>${cells}</tr>`;
     })
@@ -214,7 +258,7 @@ function renderUpcoming(L) {
   const isLatest = state.season === state.seasons[0];
   wrap.hidden = !(isLatest && up.length);
   if (wrap.hidden) return;
-  $("#upcoming-title").textContent = `Week ${up[0].week} games · turnover diff per game`;
+  $("#upcoming-title").textContent = `${weekLabel(up[0].week).replace(/^w/, "W")} games · turnover diff per game`;
   const pg = (t) => {
     const s = L.byTeam[t];
     if (!s || !s.gp) return "–";
@@ -224,7 +268,9 @@ function renderUpcoming(L) {
   $("#upcoming").innerHTML = up
     .map(
       (g) => `<button class="game" data-a="${g.away}" data-b="${g.home}">
-        <div class="when"><span>${gameWhen(g)}</span><span>${g.time ? `${g.time} ET` : ""}</span></div>
+        <div class="when"><span>${gameWhen(g)}</span><span>${
+          g.home_score != null ? `Final ${g.away_score}-${g.home_score}` : g.time ? `${g.time} ET` : ""
+        }</span></div>
         <div class="row">${logo(g.away)}<span class="abbr">${g.away}</span><span class="val">${pg(g.away)}</span></div>
         <div class="row">${logo(g.home)}<span class="abbr">@${g.home}</span><span class="val">${pg(g.home)}</span></div>
         <div class="line">${lineText(g)}</div>
@@ -235,7 +281,7 @@ function renderUpcoming(L) {
 
 // ---------- matchup ----------
 
-const CMP_ROWS = ["take", "give", "diff", "int_made", "fum_rec", "int_thrown", "fum_lost", "kept_pct", "opp_rec_pct"];
+const CMP_ROWS = ["take", "give", "diff", "int_made", "fum_rec", "int_thrown", "fum_lost", "kept_pct", "opp_rec_pct", "ats_pct", "ats_margin"];
 
 function renderMatchup(L) {
   const teams = Object.keys(data.teams).sort((x, y) => data.teams[x].name.localeCompare(data.teams[y].name));
@@ -269,6 +315,7 @@ function renderMatchup(L) {
       state.mode === "pg" ? "per game · league rank" : "totals · league rank"
     }</div><div class="t b">${data.teams[B.team].name}${logo(B.team)}</div></div>` +
     `<div class="cmp-row"><div class="v">${rec(A)}</div><div class="label">Record (${A.gp} / ${B.gp} games)</div><div class="v b">${rec(B)}</div></div>` +
+    `<div class="cmp-row"><div class="v">${A.ats.rec}</div><div class="label">Against the spread (W-L-P)</div><div class="v b">${B.ats.rec}</div></div>` +
     CMP_ROWS.map((key) => {
       const va = value(A, key), vb = value(B, key);
       const m = METRICS[key];
@@ -322,12 +369,16 @@ function renderLog(sel, s) {
     const res = g.pf > g.pa ? "W" : g.pf < g.pa ? "L" : "T";
     const ta = g.int_made + g.fum_rec, ga = g.int_thrown + g.fum_lost, d = ta - ga;
     const wk = g.type === "REG" ? g.week : g.type;
+    const a = ats(g);
+    const line = g.line == null ? "–" : g.line === 0 ? "PK" : signed(g.line);
+    const atsCell = a ? `<span class="${a.res === "W" ? "pos" : a.res === "L" ? "neg" : ""}">${a.res} ${signed(a.margin)}</span>` : "–";
     return `<tr><td>${wk}</td><td>${g.home ? "vs" : "@"} ${g.opp}</td><td>${res} ${g.pf}-${g.pa}</td>
+      <td>${line}</td><td>${atsCell}</td>
       <td class="sep key">${ta}</td><td>${g.int_made}</td><td>${g.fum_rec}</td>
       <td class="sep key">${ga}</td><td>${g.int_thrown}</td><td>${g.fum_lost}</td>
       <td class="sep key ${d > 0 ? "pos" : d < 0 ? "neg" : ""}">${d > 0 ? "+" : ""}${d}</td></tr>`;
   });
-  $(sel).innerHTML = `<thead><tr><th>Wk</th><th>Opp</th><th>Result</th><th class="sep" title="Takeaways">TA</th><th title="Interceptions made">INT</th><th title="Fumbles recovered">FR</th><th class="sep" title="Giveaways">GA</th><th title="Interceptions thrown">INT</th><th title="Fumbles lost">FL</th><th class="sep">Diff</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+  $(sel).innerHTML = `<thead><tr><th>Wk</th><th>Opp</th><th>Result</th><th title="Team's closing spread">Line</th><th title="Against the spread: result and cover margin">ATS</th><th class="sep" title="Takeaways">TA</th><th title="Interceptions made">INT</th><th title="Fumbles recovered">FR</th><th class="sep" title="Giveaways">GA</th><th title="Interceptions thrown">INT</th><th title="Fumbles lost">FL</th><th class="sep">Diff</th></tr></thead><tbody>${rows.join("")}</tbody>`;
 }
 
 // ---------- chart: cumulative TO diff by game ----------
@@ -412,6 +463,178 @@ function renderChart(A, B) {
   });
 }
 
+// ---------- ATS view: turnover margin vs covering the spread ----------
+
+const IN_GAME_BUCKETS = [
+  { label: "−3 or worse", test: (v) => v <= -3 },
+  { label: "−2", test: (v) => v === -2 },
+  { label: "−1", test: (v) => v === -1 },
+  { label: "0", test: (v) => v === 0 },
+  { label: "+1", test: (v) => v === 1 },
+  { label: "+2", test: (v) => v === 2 },
+  { label: "+3 or better", test: (v) => v >= 3 },
+];
+const EDGE_BUCKETS = [
+  { label: "< −1.0", test: (v) => v < -1 },
+  { label: "−1.0 to −0.5", test: (v) => v >= -1 && v < -0.5 },
+  { label: "−0.5 to 0", test: (v) => v >= -0.5 && v < 0 },
+  { label: "0 to +0.5", test: (v) => v >= 0 && v < 0.5 },
+  { label: "+0.5 to +1.0", test: (v) => v >= 0.5 && v < 1 },
+  { label: "≥ +1.0", test: (v) => v >= 1 },
+];
+const MIN_PRIOR = 3; // games of history needed before a team's "entering" TO rate counts
+
+// One row per team-game with a line: the in-game TO margin and the gap in
+// season-to-date TO diff/game between the team and its opponent entering it.
+function atsSamples(datasets) {
+  const out = [];
+  for (const d of datasets) {
+    const byTeam = {};
+    for (const g of d.games) (byTeam[g.team] ||= []).push(g);
+    for (const list of Object.values(byTeam)) list.sort((a, b) => (a.date < b.date ? -1 : 1));
+    const entering = (team, date) => {
+      const prior = (byTeam[team] || []).filter((x) => x.date < date);
+      return prior.length >= MIN_PRIOR ? prior.reduce((a, x) => a + toDiff(x), 0) / prior.length : null;
+    };
+    for (const team of Object.keys(d.teams)) {
+      for (const g of teamGames(team, d)) {
+        const a = ats(g);
+        if (!a) continue;
+        const mine = entering(team, g.date), theirs = entering(g.opp, g.date);
+        out.push({ season: d.season, team, g, a, to: toDiff(g), edge: mine != null && theirs != null ? mine - theirs : null });
+      }
+    }
+  }
+  return out;
+}
+
+function bucketize(samples, buckets, key) {
+  return buckets.map((b) => {
+    const t = { label: b.label, w: 0, l: 0, p: 0 };
+    for (const x of samples) if (x[key] != null && b.test(x[key])) t[x.a.res.toLowerCase()]++;
+    t.n = t.w + t.l + t.p;
+    t.pct = t.w + t.l ? t.w / (t.w + t.l) : null;
+    return t;
+  });
+}
+
+function renderBars(box, bars, ariaLabel) {
+  const W = Math.max(box.clientWidth, 280), H = 250;
+  const m = { t: 22, r: 8, b: 44, l: 40 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const band = iw / bars.length;
+  const bw = Math.min(32, band * 0.6);
+  const y = (v) => m.t + (1 - v) * ih;
+  const tip = $("#tooltip");
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${ariaLabel}"><g class="grid">`;
+  for (const v of [0, 0.25, 0.75, 1]) svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>`;
+  svg += `</g><g class="axis">`;
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) svg += `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v * 100}%</text>`;
+  svg += `</g>`;
+  bars.forEach((b, i) => {
+    const cx = m.l + band * (i + 0.5);
+    svg += `<g class="bar" data-i="${i}">`;
+    svg += `<rect class="hit" x="${cx - band / 2}" y="${m.t}" width="${band}" height="${ih + m.b}" fill="transparent"/>`;
+    if (b.pct != null) {
+      const top = y(b.pct), h = y(0) - top;
+      const r = Math.min(4, h);
+      // rounded data-end, square at the baseline
+      svg += `<path d="M${cx - bw / 2},${y(0)} V${top + r} Q${cx - bw / 2},${top} ${cx - bw / 2 + r},${top} H${cx + bw / 2 - r} Q${cx + bw / 2},${top} ${cx + bw / 2},${top + r} V${y(0)} Z" style="fill:var(--series-1)"/>`;
+      svg += `<text class="cap" x="${cx}" y="${top - 6}" text-anchor="middle">${Math.round(b.pct * 100)}%</text>`;
+    }
+    svg += `<text class="xl" x="${cx}" y="${H - m.b + 16}" text-anchor="middle">${b.label}</text>`;
+    svg += `<text class="xn" x="${cx}" y="${H - m.b + 30}" text-anchor="middle">n=${b.n}</text></g>`;
+  });
+  svg += `<line class="ref" x1="${m.l}" x2="${W - m.r}" y1="${y(0.5)}" y2="${y(0.5)}"/></svg>`;
+  box.innerHTML = svg;
+  box.querySelectorAll(".bar").forEach((g) => {
+    const b = bars[Number(g.dataset.i)];
+    g.addEventListener("mousemove", (ev) => {
+      tip.innerHTML = `<div class="tt-title">${b.label}</div>ATS ${b.w}-${b.l}${b.p ? `-${b.p}` : ""} · ${
+        b.pct == null ? "no decisions" : `covered ${(b.pct * 100).toFixed(1)}%`
+      }`;
+      tip.hidden = false;
+      tip.style.left = `${Math.min(ev.clientX + 14, window.innerWidth - tip.offsetWidth - 8)}px`;
+      tip.style.top = `${ev.clientY + 14}px`;
+    });
+    g.addEventListener("mouseleave", () => (tip.hidden = true));
+  });
+}
+
+function renderATS() {
+  document.querySelectorAll("#ats-sample button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.sample === state.atsSample));
+  const datasets = state.atsSample === "all" ? state.seasons.map((x) => cache[x]).filter(Boolean) : [data];
+  const seasons = datasets.map((d) => d.season).sort();
+  $("#ats-sample-all").textContent = `All seasons (${Math.min(...state.seasons)}–${Math.max(...state.seasons)})`;
+  const samples = atsSamples(datasets);
+
+  // Headline tiles: won / even / lost the turnover battle.
+  const tally = (f) => atsTally(samples.filter(f).map((x) => x.g));
+  const tiles = [
+    { label: "Won the turnover battle", t: tally((x) => x.to > 0) },
+    { label: "Even turnovers", t: tally((x) => x.to === 0) },
+    { label: "Lost the turnover battle", t: tally((x) => x.to < 0) },
+  ];
+  $("#ats-tiles").innerHTML = tiles
+    .map(
+      ({ label, t }) => `<div class="tile"><div class="tile-label">${label}</div>
+        <div class="tile-value">${t.pct == null ? "–" : `${Math.round(t.pct * 100)}%`}</div>
+        <div class="tile-sub">covered · ATS ${t.rec} · avg cover margin ${signed(t.avg)}</div></div>`
+    )
+    .join("");
+
+  const scope = `${seasons.length > 1 ? `${seasons[0]}–${seasons[seasons.length - 1]}` : seasons[0]} · ${samples.length} team-games with a line`;
+  $("#ats-scope").textContent = scope;
+  renderBars($("#ats-chart-ingame"), bucketize(samples, IN_GAME_BUCKETS, "to"), "Cover rate by turnover margin in the game");
+  renderBars($("#ats-chart-edge"), bucketize(samples, EDGE_BUCKETS, "edge"), "Cover rate by turnover edge entering the game");
+
+  // Team table
+  const teams = {};
+  for (const x of samples) (teams[x.team] ||= []).push(x);
+  const rows = Object.entries(teams).map(([team, xs]) => {
+    const all = atsTally(xs.map((x) => x.g));
+    const won = atsTally(xs.filter((x) => x.to > 0).map((x) => x.g));
+    const even = atsTally(xs.filter((x) => x.to === 0).map((x) => x.g));
+    const lost = atsTally(xs.filter((x) => x.to < 0).map((x) => x.g));
+    return { team, all, won, even, lost, n: xs.length, todiff: xs.reduce((a, x) => a + x.to, 0) / xs.length };
+  });
+  const cols = [
+    { key: "n", label: "Games", get: (r) => r.n, show: (r) => r.n },
+    { key: "ats_pct", label: "ATS", get: (r) => r.all.pct, show: (r) => r.all.rec, sep: true },
+    { key: "ats_pct2", label: "Cover %", get: (r) => r.all.pct, show: (r) => pct(r.all.pct) },
+    { key: "ats_margin", label: "Cover margin", get: (r) => r.all.avg, show: (r) => `<span class="${posneg(r.all.avg)}">${signed(r.all.avg)}</span>` },
+    { key: "todiff", label: "TO diff/g", get: (r) => r.todiff, show: (r) => `<span class="${posneg(r.todiff)}">${signed(r.todiff, 2)}</span>`, sep: true },
+    { key: "won", label: "Won TO battle", get: (r) => r.won.pct, show: (r) => cell(r.won), sep: true },
+    { key: "even", label: "Even", get: (r) => r.even.pct, show: (r) => cell(r.even) },
+    { key: "lost", label: "Lost TO battle", get: (r) => r.lost.pct, show: (r) => cell(r.lost) },
+  ];
+  function pct(v) { return v == null ? "–" : `${Math.round(v * 100)}%`; }
+  function cell(t) { return t.n ? `${t.rec} <span class="muted">(${pct(t.pct)})</span>` : "–"; }
+  const { key: sk, dir } = state.atsSort;
+  const col = cols.find((c) => c.key === sk);
+  rows.sort((x, y) => {
+    let a, b;
+    if (sk === "team") [a, b] = [data.teams[x.team]?.name || x.team, data.teams[y.team]?.name || y.team];
+    else [a, b] = [col.get(x), col.get(y)];
+    if (a == null) return 1;
+    if (b == null) return -1;
+    const c = a < b ? -1 : a > b ? 1 : 0;
+    return dir === "asc" ? c : -c;
+  });
+  const table = $("#ats-table");
+  table.tHead.innerHTML = `<tr><th class="sortable" data-key="team" ${sk === "team" ? `aria-sort="${dir}ending"` : ""}>Team</th>${cols
+    .map((c) => `<th class="sortable ${c.sep ? "sep" : ""}" data-key="${c.key}" ${sk === c.key ? `aria-sort="${dir}ending"` : ""}>${c.label}</th>`)
+    .join("")}</tr>`;
+  table.tBodies[0].innerHTML = rows
+    .map(
+      (r, i) =>
+        `<tr><td class="team"><span class="rank">${i + 1}</span>${logo(r.team)}<a href="#" data-team="${r.team}">${r.team}</a></td>${cols
+          .map((c) => `<td class="${c.sep ? "sep" : ""}">${c.show(r)}</td>`)
+          .join("")}</tr>`
+    )
+    .join("");
+}
+
 // ---------- routing & wiring ----------
 
 function writeHash() {
@@ -423,7 +646,7 @@ function writeHash() {
 
 function readHash() {
   const [view, q] = location.hash.slice(1).split("?");
-  if (view === "matchup" || view === "league") state.view = view;
+  if (["league", "matchup", "ats"].includes(view)) state.view = view;
   const p = new URLSearchParams(q || "");
   if (p.get("season")) state.season = Number(p.get("season"));
   if (p.get("a")) state.a = p.get("a");
@@ -435,14 +658,16 @@ function render() {
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.view === state.view));
   $("#view-league").hidden = state.view !== "league";
   $("#view-matchup").hidden = state.view !== "matchup";
-  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === state.mode));
+  $("#view-ats").hidden = state.view !== "ats";
+  document.querySelectorAll("#mode-seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === state.mode));
   const upd = new Date(data.updated);
-  $("#updated").textContent = `${data.season} season · through week ${data.last_week} · updated ${upd.toLocaleString(undefined, {
+  $("#updated").textContent = `${data.season} season · through ${weekLabel(data.last_week)} · updated ${upd.toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   })}`;
   renderUpcoming(L);
   if (state.view === "league") renderLeague(L);
-  else renderMatchup(L);
+  else if (state.view === "matchup") renderMatchup(L);
+  else renderATS();
   writeHash();
 }
 
@@ -463,7 +688,22 @@ function wire() {
   $("#f-type").addEventListener("change", (e) => { state.type = e.target.value; render(); });
   $("#f-span").addEventListener("change", (e) => { state.span = Number(e.target.value); render(); });
   $("#f-venue").addEventListener("change", (e) => { state.venue = e.target.value; render(); });
-  document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { state.mode = b.dataset.mode; render(); }));
+  document.querySelectorAll("#mode-seg button").forEach((b) => b.addEventListener("click", () => { state.mode = b.dataset.mode; render(); }));
+  document.querySelectorAll("#ats-sample button").forEach((b) =>
+    b.addEventListener("click", async () => {
+      state.atsSample = b.dataset.sample;
+      if (state.atsSample === "all") await Promise.all(state.seasons.map(loadSeason));
+      render();
+    })
+  );
+  $("#ats-table").tHead.addEventListener("click", (e) => {
+    const th = e.target.closest("th[data-key]");
+    if (!th) return;
+    const key = th.dataset.key;
+    if (state.atsSort.key === key) state.atsSort.dir = state.atsSort.dir === "desc" ? "asc" : "desc";
+    else state.atsSort = { key, dir: key === "team" ? "asc" : "desc" };
+    render();
+  });
   document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => { state.view = b.dataset.view; render(); }));
 
   $("#league").tHead.addEventListener("click", (e) => {
@@ -485,6 +725,14 @@ function wire() {
     const up = (data.upcoming || []).find((g) => g.home === t || g.away === t);
     openMatchup(t, up ? (up.home === t ? up.away : up.home) : state.b === t ? null : state.b);
   });
+  $("#ats-table").tBodies[0].addEventListener("click", (e) => {
+    const a = e.target.closest("a[data-team]");
+    if (!a) return;
+    e.preventDefault();
+    const t = a.dataset.team;
+    const up = (data.upcoming || []).find((g) => g.home === t || g.away === t);
+    openMatchup(t, up ? (up.home === t ? up.away : up.home) : state.b === t ? null : state.b);
+  });
   $("#upcoming").addEventListener("click", (e) => {
     const g = e.target.closest(".game");
     if (g) openMatchup(g.dataset.a, g.dataset.b);
@@ -496,7 +744,7 @@ function wire() {
   let t;
   window.addEventListener("resize", () => {
     clearTimeout(t);
-    t = setTimeout(() => state.view === "matchup" && render(), 150);
+    t = setTimeout(() => state.view !== "league" && render(), 150);
   });
 }
 

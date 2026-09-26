@@ -5,7 +5,7 @@ Turnover metrics for NFL betting, built on free [nflverse](https://github.com/nf
 - **Backend** (`backend/`): a Python script that pulls play-by-play and schedules with
   [`nflreadpy`](https://github.com/nflverse/nflreadpy) and writes per-team game logs to `web/data/*.json`.
 - **Website** (`web/`): a static site with no build step that reads those JSON files and shows the tables and comparisons.
-- **Automation** (`.github/workflows/update-data.yml`): refreshes the current season every Tuesday and Friday,
+- **Automation** (`.github/workflows/update-data.yml`): refreshes the current season every Tuesday morning,
   commits the new data, and (optionally) publishes the site to GitHub Pages.
 
 ## What it shows
@@ -19,6 +19,16 @@ It also has two fumble-luck columns:
 
 Fumble recoveries are close to a coin flip, so a team well above or below 50% is a regression candidate.
 
+**vs Spread**: turnover margin against covering the spread (closing lines from nflverse).
+- Cover rate when a team won, tied, or lost the turnover battle.
+- Cover rate by the game's final turnover margin (−3 or worse through +3 or better).
+- Cover rate by the *entering-the-game* turnover edge: the team's season-to-date TO diff/game minus its opponent's.
+  This is the one you can actually bet on.
+- Per-team ATS record, cover %, average cover margin, and ATS record split by won/even/lost turnover battle.
+- Switch between the selected season and all loaded seasons pooled together.
+
+ATS records and each game's line and cover margin also appear in the league table, the matchup view, and the game logs.
+
 **Upcoming games**: the next week's slate with the spread, the total, and each team's turnover diff per game.
 Click a game to open the matchup.
 
@@ -29,6 +39,13 @@ Click a game to open the matchup.
 - Both teams' game logs.
 
 **Filters**: season, regular season/playoffs, full season or last 3/5/8 games, and home/away splits.
+
+### Weekly data cutoff
+
+Data only goes through the last *fully completed* week. A Thursday night game isn't added until that whole week
+is final on Monday night, so every team through week N has the same games (bye weeks aside). The site's header
+shows "through week N", and the upcoming-games strip shows the next week's slate. Thursday games already played
+show their final score there.
 
 ### How turnovers are counted
 
@@ -57,8 +74,14 @@ The site has to be served over HTTP, because opening `index.html` directly block
 
 1. Merge to the default branch. Scheduled workflows only run from the default branch.
 2. Go to **Settings → Pages → Source** and choose **GitHub Actions**.
-3. The workflow then updates the data twice a week and redeploys the site. You can also run it
+3. The workflow then updates the data every Tuesday and redeploys the site. You can also run it
    on demand from the **Actions** tab ("Update NFL data" → *Run workflow*).
+
+## Logos
+
+`web/logos/<TEAM>.png` holds the primary logos from the Uniform Lab pack, resized to 128px. The Rams (`LA`)
+weren't in the pack, so the site falls back to nflverse's logo URL for any team without a local file. To add
+one, drop in `web/logos/LA.png`.
 
 ## Data format
 
@@ -67,7 +90,9 @@ The site has to be served over HTTP, because opening `index.html` directly block
 | field | meaning |
 |---|---|
 | `week`, `type`, `date`, `team`, `opp`, `home`, `pf`, `pa` | game info from the team's point of view (`type` is REG/WC/DIV/CON/SB) |
+| `line` | the team's closing spread (negative = favored); it covered if `pf - pa + line > 0` |
 | `int_thrown`, `fum_lost`, `fumbles` | giveaways, plus total fumbles (lost or not) |
 | `int_made`, `fum_rec`, `opp_fumbles` | takeaways, plus total opponent fumbles |
 
-`upcoming` lists the next week's unplayed games with `spread_line` (positive = home favored) and `total_line`.
+`upcoming` lists the games in the week after the published data, with `spread_line` (positive = home favored),
+`total_line`, and the score if it has already been played.

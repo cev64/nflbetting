@@ -16,6 +16,7 @@
       <nav class="tabs" role="tablist">
         <button role="tab" data-view="league" aria-selected="true">League</button>
         <button role="tab" data-view="matchup" aria-selected="false">Matchup</button>
+        <button role="tab" data-view="ats" aria-selected="false">vs Spread</button>
       </nav>
     </div>
   </header>
@@ -45,7 +46,7 @@
           <option value="away">Away only</option>
         </select>
       </label>
-      <div class="seg" role="group" aria-label="Stat mode">
+      <div class="seg" id="mode-seg" role="group" aria-label="Stat mode">
         <button data-mode="pg" aria-pressed="true">Per game</button>
         <button data-mode="tot" aria-pressed="false">Totals</button>
       </div>
@@ -90,6 +91,42 @@
         <div class="card"><h3 class="card-title" id="m-log-a-title"></h3><div class="table-scroll"><table class="stats log" id="m-log-a"></table></div></div>
         <div class="card"><h3 class="card-title" id="m-log-b-title"></h3><div class="table-scroll"><table class="stats log" id="m-log-b"></table></div></div>
       </div>
+    </section>
+
+    <section id="view-ats" class="view" hidden>
+      <div class="ats-head">
+        <div class="seg" id="ats-sample" role="group" aria-label="Sample">
+          <button data-sample="season" aria-pressed="true">Selected season</button>
+          <button data-sample="all" id="ats-sample-all" aria-pressed="false">All seasons</button>
+        </div>
+        <span class="muted" id="ats-scope"></span>
+      </div>
+      <div id="ats-tiles" class="tiles"></div>
+      <div class="ats-charts">
+        <div class="card">
+          <h3 class="card-title">Cover rate by turnover margin in the game</h3>
+          <p class="card-sub">What happened: how often a team covered given the turnover margin it finished with. It explains
+            results but is only known after the game.</p>
+          <div id="ats-chart-ingame" class="chart"></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Cover rate by turnover edge entering the game</h3>
+          <p class="card-sub">What you can bet on: the team's season-to-date turnover diff per game minus its opponent's,
+            before kickoff. Both teams need 3+ prior games.</p>
+          <div id="ats-chart-edge" class="chart"></div>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table id="ats-table" class="stats">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="note">
+        Covers use nflverse's closing spread from each team's side; pushes count in the record but not in cover %.
+        <b>Won/Even/Lost TO battle</b> splits each team's ATS record by its turnover margin in that game. The Games,
+        Span and Venue filters apply here too. The 50% line is break-even before the vig (about 52.4% at −110).
+      </p>
     </section>
   </main>
 

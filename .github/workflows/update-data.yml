@@ -2,9 +2,10 @@ name: Update NFL data
 
 on:
   schedule:
-    # Tuesday 12:00 UTC (after Monday Night Football) and Friday 12:00 UTC (after Thursday Night Football).
-    - cron: "0 12 * * 2"
-    - cron: "0 12 * * 5"
+    # Once a week: Tuesday 14:00 UTC (10am ET), after Monday Night Football is final.
+    # The fetcher also only publishes fully completed weeks, so a manual run mid-week
+    # (e.g. after Thursday Night Football) never adds a partial week.
+    - cron: "0 14 * * 2"
   workflow_dispatch:
   push:
     branches: [main]
