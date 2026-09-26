@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NFL Turnover Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-row">
+      <div>
+        <h1>NFL Turnover Tracker</h1>
+        <p class="sub" id="updated">Loading data…</p>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-view="league" aria-selected="true">League</button>
+        <button role="tab" data-view="matchup" aria-selected="false">Matchup</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="filters" aria-label="Filters">
+      <label>Season <select id="f-season"></select></label>
+      <label>Games
+        <select id="f-type">
+          <option value="REG">Regular season</option>
+          <option value="POST">Playoffs</option>
+          <option value="ALL">All games</option>
+        </select>
+      </label>
+      <label>Span
+        <select id="f-span">
+          <option value="0">Full season</option>
+          <option value="3">Last 3 games</option>
+          <option value="5">Last 5 games</option>
+          <option value="8">Last 8 games</option>
+        </select>
+      </label>
+      <label>Venue
+        <select id="f-venue">
+          <option value="all">Home &amp; away</option>
+          <option value="home">Home only</option>
+          <option value="away">Away only</option>
+        </select>
+      </label>
+      <div class="seg" role="group" aria-label="Stat mode">
+        <button data-mode="pg" aria-pressed="true">Per game</button>
+        <button data-mode="tot" aria-pressed="false">Totals</button>
+      </div>
+    </section>
+
+    <section id="upcoming-wrap" hidden>
+      <h2 class="section-title" id="upcoming-title">Upcoming games</h2>
+      <div id="upcoming" class="upcoming"></div>
+    </section>
+
+    <section id="view-league" class="view">
+      <div class="table-scroll">
+        <table id="league" class="stats">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="note">
+        <b>Takeaways</b> = interceptions made + opponent fumbles recovered.
+        <b>Giveaways</b> = interceptions thrown + fumbles lost (including special teams).
+        <b>Fum kept %</b> is the share of a team's own fumbles it recovered; <b>Opp fum rec %</b> is the share of
+        opponent fumbles the team recovered. Fumble recoveries are close to a coin flip league-wide
+        (~50%), so teams far from 50% tend to regress. Click a column to sort, a team to open its matchup view.
+      </p>
+    </section>
+
+    <section id="view-matchup" class="view" hidden>
+      <div class="matchup-pick">
+        <label>Team A <select id="m-a"></select></label>
+        <button id="m-swap" class="ghost" title="Swap teams" aria-label="Swap teams">⇄</button>
+        <label>Team B <select id="m-b"></select></label>
+      </div>
+      <div id="m-line" class="m-line"></div>
+      <div id="m-compare" class="compare"></div>
+      <div id="m-edges" class="edges"></div>
+      <div class="card">
+        <h3 class="card-title">Cumulative turnover differential</h3>
+        <div id="m-legend" class="legend"></div>
+        <div id="m-chart" class="chart"></div>
+      </div>
+      <div class="logs">
+        <div class="card"><h3 class="card-title" id="m-log-a-title"></h3><div class="table-scroll"><table class="stats log" id="m-log-a"></table></div></div>
+        <div class="card"><h3 class="card-title" id="m-log-b-title"></h3><div class="table-scroll"><table class="stats log" id="m-log-b"></table></div></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap footer">
+    Data: <a href="https://github.com/nflverse">nflverse</a> play-by-play via <code>nflreadpy</code>. Lines are nflverse's
+    consensus spread/total; spread shown from the favorite's side.
+  </footer>
+
+  <div id="tooltip" class="tooltip" role="status" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
