@@ -2,9 +2,14 @@ name: Update NFL data
 
 on:
   schedule:
-    # Once a week: Tuesday 14:00 UTC (10am ET), after Monday Night Football is final.
-    # The fetcher also only publishes fully completed weeks, so a manual run mid-week
-    # (e.g. after Thursday Night Football) never adds a partial week.
+    # Every morning at 8am Eastern, for the latest lines. Cron runs in UTC with no
+    # daylight saving, so both 12:00 UTC (8am EDT) and 13:00 UTC (8am EST) are
+    # scheduled and the "eastern-time" job below keeps only the one that matches.
+    - cron: "0 12 * * *"
+    - cron: "0 13 * * *"
+    # Tuesday 14:00 UTC (10am EDT, 9am EST) as well, in case Monday night's play-by-play wasn't
+    # published by 8am. The fetcher only publishes fully completed weeks, so any
+    # mid-week run refreshes lines without adding a partial week of stats.
     - cron: "0 14 * * 2"
   workflow_dispatch:
   # Redeploy the site whenever the site or this workflow changes.
@@ -21,10 +26,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Of the two 8am crons, keep only the one that is 8am in New York today. It checks
+  # the UTC offset rather than the clock, so a run GitHub starts late still goes ahead.
+  eastern-time:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        run: |
+          offset=$(TZ=America/New_York date +%z)
+          case "${{ github.event.schedule }}|$offset" in
+            "0 12 * * *|-0500"|"0 13 * * *|-0400") echo "run=false" >> "$GITHUB_OUTPUT"; echo "Not 8am ET (UTC$offset); skipping." ;;
+            *) echo "run=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
   update:
+    needs: eastern-time
     # Pages only accepts deployments from the default branch.
     # (Scheduled runs always use the default branch; their payload has no repository info.)
-    if: github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch
+    if: >-
+      needs.eastern-time.outputs.run == 'true' &&
+      (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

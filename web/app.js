@@ -15,11 +15,85 @@ const state = {
   sort: { key: "diff", dir: "desc" },
   atsSample: "season", // "season" | "all"
   atsSort: { key: "ats_pct", dir: "desc" },
+  kickSort: {}, // per side ("off" / "def"): { key, dir }
 };
 const cache = {};
 let data = null; // current season payload
 
 const $ = (sel) => document.querySelector(sel);
+
+// ---------- motion kit (see the Fluid Glass guide) ----------
+
+const EASE = "cubic-bezier(.22,1,.36,1)";
+const REDUCE = matchMedia("(prefers-reduced-motion: reduce)");
+const TINT = { up: "21,128,61", down: "220,38,38", accent: "16,89,252" };
+
+// Restart a CSS animation class.
+function replay(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+}
+
+// Fading colour wash.
+function tint(el, rgb, { delay = 0, a = 0.16, duration = 1400 } = {}) {
+  if (REDUCE.matches) return;
+  el.animate([{ backgroundColor: `rgba(${rgb},${a})` }, { backgroundColor: `rgba(${rgb},0)` }], { duration, easing: "ease-out", delay });
+}
+
+// One white pill that glides to the selected button of a segmented control.
+function glideIndicator(box) {
+  let ind = box.querySelector(":scope > .seg-ind");
+  if (!ind) {
+    ind = document.createElement("span");
+    ind.className = "seg-ind";
+    box.prepend(ind);
+  }
+  const on = box.querySelector('[aria-selected="true"],[aria-pressed="true"]');
+  if (!on || !on.offsetWidth) return;
+  ind.style.width = `${on.offsetWidth}px`;
+  ind.style.transform = `translateX(${on.offsetLeft}px)`;
+  // Transition only after the first placement, so nothing slides in on load.
+  if (!ind.classList.contains("ready")) requestAnimationFrame(() => requestAnimationFrame(() => ind.classList.add("ready")));
+}
+const glideAll = () => document.querySelectorAll(".seg").forEach(glideIndicator);
+
+// FLIP: rows keyed by data-k slide from where they were, washing green when
+// they moved up and red when they moved down; new rows fade in.
+function snapshot(root) {
+  if (!root || !root.offsetParent || REDUCE.matches) return null;
+  const m = new Map();
+  root.querySelectorAll("[data-k]").forEach((el) => m.set(el.dataset.k, el.getBoundingClientRect().top));
+  return m.size ? m : null;
+}
+function flip(root, before) {
+  if (!before || !root) return;
+  root.querySelectorAll("[data-k]").forEach((el) => {
+    const was = before.get(el.dataset.k);
+    if (was == null) {
+      el.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 450, easing: EASE });
+      return;
+    }
+    const dy = was - el.getBoundingClientRect().top;
+    if (Math.abs(dy) > 1) {
+      el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 650, easing: EASE, fill: "backwards" });
+      tint(el, dy > 0 ? TINT.up : TINT.down, { a: 0.1 });
+    }
+  });
+}
+
+// Tooltip: a glass popover that follows the pointer.
+const tip = () => $("#tooltip");
+function showTip(html, ev) {
+  const t = tip();
+  t.innerHTML = html;
+  t.classList.add("on");
+  const x = Math.min(ev.clientX + 14, window.innerWidth - t.offsetWidth - 8);
+  const y = ev.clientY + 16 + t.offsetHeight > window.innerHeight - 8 ? ev.clientY - t.offsetHeight - 12 : ev.clientY + 16;
+  t.style.left = `${Math.max(8, x)}px`;
+  t.style.top = `${y}px`;
+}
+const hideTip = () => tip().classList.remove("on");
 
 // ---------- data ----------
 
@@ -69,13 +143,16 @@ function atsTally(games) {
   return t;
 }
 
+// Drive / red-zone / kicking counts stored per team-game (and opp_ for the defense).
+const DRIVE_KEYS = ["drives", "t40", "rz", "rz_td", "td", "fga", "fgm", "fg50", "xpa", "xpm"];
+
 function aggregate(team, d = data) {
   const games = teamGames(team, d);
   const s = { team, games, gp: games.length, w: 0, l: 0, t: 0 };
-  const keys = ["int_made", "fum_rec", "int_thrown", "fum_lost", "fumbles", "opp_fumbles", "pf", "pa"];
+  const keys = ["int_made", "fum_rec", "int_thrown", "fum_lost", "fumbles", "opp_fumbles", "pf", "pa", ...DRIVE_KEYS, ...DRIVE_KEYS.map((k) => `opp_${k}`)];
   for (const k of keys) s[k] = 0;
   for (const g of games) {
-    for (const k of keys) s[k] += g[k];
+    for (const k of keys) s[k] += g[k] ?? 0;
     if (g.pf > g.pa) s.w++;
     else if (g.pf < g.pa) s.l++;
     else s.t++;
@@ -85,6 +162,14 @@ function aggregate(team, d = data) {
   s.diff = s.take - s.give;
   s.kept_pct = s.fumbles ? (s.fumbles - s.fum_lost) / s.fumbles : null;
   s.opp_rec_pct = s.opp_fumbles ? s.fum_rec / s.opp_fumbles : null;
+  // Drives & red zone: offense, and (def_) what the defense allowed.
+  s.has_drives = games.some((g) => g.t40 != null);
+  s.off_t40 = s.t40;
+  s.def_t40 = s.opp_t40;
+  s.off_rz_pct = s.rz ? s.rz_td / s.rz : null;
+  s.def_rz_pct = s.opp_rz ? s.opp_rz_td / s.opp_rz : null;
+  s.off_fga_trip = s.t40 ? s.fga / s.t40 : null;
+  s.def_fga_trip = s.opp_t40 ? s.opp_fga / s.opp_t40 : null;
   s.ats = atsTally(games);
   s.ats_pct = s.ats.pct;
   s.ats_margin = s.ats.avg;
@@ -104,6 +189,13 @@ const METRICS = {
   opp_rec_pct: { label: "Opp fumbles recovered", short: "Opp fum rec %", better: 1, pct: true },
   ats_pct: { label: "ATS cover %", short: "Cover %", better: 1, pct: true },
   ats_margin: { label: "Avg cover margin", short: "Cover margin", better: 1, signed: true, avg: true },
+  // better: 0 = no "good" direction (ranked high to low, never highlighted)
+  off_t40: { label: "Trips inside the 40", short: "Trips 40", better: 1, count: true },
+  off_rz_pct: { label: "Red-zone TD %", short: "RZ TD %", better: 1, pct: true },
+  fgm: { label: "Field goals made", short: "FGM", better: 0, count: true },
+  def_t40: { label: "Trips inside the 40 allowed", short: "Trips 40", better: -1, count: true },
+  def_rz_pct: { label: "Red-zone TD % allowed", short: "RZ TD %", better: -1, pct: true },
+  opp_fgm: { label: "Field goals allowed", short: "FGM", better: 0, count: true },
 };
 
 function value(s, key) {
@@ -133,7 +225,7 @@ function leagueStats() {
     const m = METRICS[key];
     const sorted = stats
       .filter((s) => value(s, key) != null)
-      .sort((x, y) => (value(y, key) - value(x, key)) * m.better);
+      .sort((x, y) => (value(y, key) - value(x, key)) * (m.better || 1));
     ranks[key] = {};
     sorted.forEach((s, i) => {
       // ties share the better rank
@@ -232,7 +324,7 @@ function renderLeague(L) {
         const txt = c.text ? c.text(s) : c.key === "gp" ? s.gp : fmt(v, c.key);
         return `<td class="${cls}" style="${style}">${txt}</td>`;
       }).join("");
-      return `<tr><td class="team"><span class="rank">${i + 1}</span>${logo(s.team)}<a href="#" data-team="${s.team}" title="${data.teams[s.team].name}">${s.team}</a></td>${cells}</tr>`;
+      return `<tr data-k="${s.team}"><td class="team"><span class="rank">${i + 1}</span>${logo(s.team)}<a href="#" data-team="${s.team}" title="${data.teams[s.team].name}">${s.team}</a></td>${cells}</tr>`;
     })
     .join("");
 }
@@ -252,6 +344,8 @@ function gameWhen(g) {
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
+const isPair = (g, a, b) => (g.home === a && g.away === b) || (g.home === b && g.away === a);
+
 function renderUpcoming(L) {
   const wrap = $("#upcoming-wrap");
   const up = data.upcoming || [];
@@ -259,15 +353,16 @@ function renderUpcoming(L) {
   wrap.hidden = !(isLatest && up.length);
   if (wrap.hidden) return;
   $("#upcoming-title").textContent = `${weekLabel(up[0].week).replace(/^w/, "W")} games · turnover diff per game`;
+  const was = new Set([...document.querySelectorAll("#upcoming .game.on")].map((el) => el.dataset.k));
   const pg = (t) => {
     const s = L.byTeam[t];
     if (!s || !s.gp) return "–";
     const v = s.diff / s.gp;
     return `<span class="${v > 0 ? "pos" : v < 0 ? "neg" : ""}">${v > 0 ? "+" : ""}${v.toFixed(2)}</span>`;
   };
-  $("#upcoming").innerHTML = up
+  const html = up
     .map(
-      (g) => `<button class="game" data-a="${g.away}" data-b="${g.home}">
+      (g, i) => `<button class="game" style="--n:${i}" data-k="${g.game_id}" data-a="${g.away}" data-b="${g.home}">
         <div class="when"><span>${gameWhen(g)}</span><span>${
           g.home_score != null ? `Final ${g.away_score}-${g.home_score}` : g.time ? `${g.time} ET` : ""
         }</span></div>
@@ -277,11 +372,28 @@ function renderUpcoming(L) {
       </button>`
     )
     .join("");
+  // Only rebuild when the tiles' content changed, so the strip keeps its scroll position.
+  const box = $("#upcoming");
+  if (box.dataset.html !== html) {
+    box.dataset.html = html;
+    box.innerHTML = html;
+    replay(box, "enter");
+  }
+  box.querySelectorAll(".game").forEach((el) => {
+    const g = { home: el.dataset.b, away: el.dataset.a };
+    const sel = state.view === "matchup" && isPair(g, state.a, state.b);
+    el.classList.toggle("on", sel);
+    el.setAttribute("aria-pressed", sel);
+    if (sel && !was.has(el.dataset.k)) replay(el, "pop");
+  });
 }
 
 // ---------- matchup ----------
 
-const CMP_ROWS = ["take", "give", "diff", "int_made", "fum_rec", "int_thrown", "fum_lost", "kept_pct", "opp_rec_pct", "ats_pct", "ats_margin"];
+const CMP_ROWS = [
+  "take", "give", "diff", "int_made", "fum_rec", "int_thrown", "fum_lost", "kept_pct", "opp_rec_pct", "ats_pct", "ats_margin",
+  { sec: "Red zone & kicking" }, "off_t40", "off_rz_pct", "fgm", "def_t40", "def_rz_pct", "opp_fgm",
+];
 
 function renderMatchup(L) {
   const teams = Object.keys(data.teams).sort((x, y) => data.teams[x].name.localeCompare(data.teams[y].name));
@@ -311,12 +423,13 @@ function renderMatchup(L) {
   const rk = (key, t) => (L.ranks[key][t] ? `<small>${ordinal(L.ranks[key][t])}</small>` : "");
   const rec = (s) => `${s.w}-${s.l}${s.t ? `-${s.t}` : ""}`;
   $("#m-compare").innerHTML =
-    `<div class="cmp-head"><div class="t">${logo(A.team)}${data.teams[A.team].name}</div><div class="label muted">${
+    `<div class="cmp-head"><div class="t">${logo(A.team)}<span>${A.team}</span><span class="name muted">${data.teams[A.team].nick || ""}</span></div><div class="label micro">${
       state.mode === "pg" ? "per game · league rank" : "totals · league rank"
-    }</div><div class="t b">${data.teams[B.team].name}${logo(B.team)}</div></div>` +
+    }</div><div class="t b"><span class="name muted">${data.teams[B.team].nick || ""}</span><span>${B.team}</span>${logo(B.team)}</div></div>` +
     `<div class="cmp-row"><div class="v">${rec(A)}</div><div class="label">Record (${A.gp} / ${B.gp} games)</div><div class="v b">${rec(B)}</div></div>` +
     `<div class="cmp-row"><div class="v">${A.ats.rec}</div><div class="label">Against the spread (W-L-P)</div><div class="v b">${B.ats.rec}</div></div>` +
-    CMP_ROWS.map((key) => {
+    (A.has_drives && B.has_drives ? CMP_ROWS : CMP_ROWS.slice(0, CMP_ROWS.findIndex((k) => k.sec))).map((key) => {
+      if (key.sec) return `<div class="cmp-sec micro">${key.sec}</div>`;
       const va = value(A, key), vb = value(B, key);
       const m = METRICS[key];
       const aWin = va != null && vb != null && (va - vb) * m.better > 0;
@@ -353,7 +466,7 @@ function renderMatchup(L) {
     e1.html +
     e2.html +
     `<div class="edge"><h4>Projected turnover margin</h4><p>Naive average of each offense's giveaway rate and the opposing defense's takeaway rate.</p>
-      <div style="font-size:28px;font-weight:600">${Math.abs(margin) < 0.05 ? "Even" : `${leader} +${Math.abs(margin).toFixed(2)}`}</div>
+      <div class="big">${Math.abs(margin) < 0.05 ? "Even" : `${leader} +${Math.abs(margin).toFixed(2)}`}</div>
       <div class="verdict">${A.team} ${e2.proj.toFixed(2)} takeaways vs ${B.team} ${e1.proj.toFixed(2)} expected.
       Small samples swing hard; check the span filter.</div></div>`;
 
@@ -434,7 +547,7 @@ function renderChart(A, B) {
   box.innerHTML = svg;
 
   // Crosshair tooltip: snap to the nearest game index.
-  const zone = $("#hover-zone"), line = $("#hover-line"), tip = $("#tooltip");
+  const zone = $("#hover-zone"), line = $("#hover-line");
   const svgEl = box.querySelector("svg");
   zone.addEventListener("mousemove", (ev) => {
     const r = svgEl.getBoundingClientRect();
@@ -450,14 +563,10 @@ function renderChart(A, B) {
         return `<div class="tt-row"><i style="background:${s.color}"></i><b>${s.team}</b>&nbsp;${wk} ${p.g.home ? "vs" : "@"} ${p.g.opp}: ${p.d > 0 ? "+" : ""}${p.d} (total ${p.cum > 0 ? "+" : ""}${p.cum})</div>`;
       })
       .join("");
-    tip.innerHTML = `<div class="tt-title">Game ${i}</div>${rows}`;
-    tip.hidden = false;
-    const tw = tip.offsetWidth;
-    tip.style.left = `${Math.min(ev.clientX + 14, window.innerWidth - tw - 8)}px`;
-    tip.style.top = `${ev.clientY + 14}px`;
+    showTip(`<div class="tt-title">Game ${i}</div>${rows}`, ev);
   });
   zone.addEventListener("mouseleave", () => {
-    tip.hidden = true;
+    hideTip();
     line.setAttribute("x1", -10);
     line.setAttribute("x2", -10);
   });
@@ -525,7 +634,6 @@ function renderBars(box, bars, ariaLabel) {
   const band = iw / bars.length;
   const bw = Math.min(32, band * 0.6);
   const y = (v) => m.t + (1 - v) * ih;
-  const tip = $("#tooltip");
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${ariaLabel}"><g class="grid">`;
   for (const v of [0, 0.25, 0.75, 1]) svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>`;
   svg += `</g><g class="axis">`;
@@ -550,14 +658,11 @@ function renderBars(box, bars, ariaLabel) {
   box.querySelectorAll(".bar").forEach((g) => {
     const b = bars[Number(g.dataset.i)];
     g.addEventListener("mousemove", (ev) => {
-      tip.innerHTML = `<div class="tt-title">${b.label}</div>ATS ${b.w}-${b.l}${b.p ? `-${b.p}` : ""} · ${
+      showTip(`<div class="tt-title">${b.label}</div>ATS ${b.w}-${b.l}${b.p ? `-${b.p}` : ""} · ${
         b.pct == null ? "no decisions" : `covered ${(b.pct * 100).toFixed(1)}%`
-      }`;
-      tip.hidden = false;
-      tip.style.left = `${Math.min(ev.clientX + 14, window.innerWidth - tip.offsetWidth - 8)}px`;
-      tip.style.top = `${ev.clientY + 14}px`;
+      }`, ev);
     });
-    g.addEventListener("mouseleave", () => (tip.hidden = true));
+    g.addEventListener("mouseleave", hideTip);
   });
 }
 
@@ -628,7 +733,7 @@ function renderATS() {
   table.tBodies[0].innerHTML = rows
     .map(
       (r, i) =>
-        `<tr><td class="team"><span class="rank">${i + 1}</span>${logo(r.team)}<a href="#" data-team="${r.team}">${r.team}</a></td>${cols
+        `<tr data-k="${r.team}"><td class="team"><span class="rank">${i + 1}</span>${logo(r.team)}<a href="#" data-team="${r.team}">${r.team}</a></td>${cols
           .map((c) => `<td class="${c.sep ? "sep" : ""}">${c.show(r)}</td>`)
           .join("")}</tr>`
     )
@@ -694,7 +799,7 @@ function renderSpots() {
   // 2026 flagged games already graded
   const hist = [...(model.live_history || [])].reverse();
   $("#spots-history").innerHTML = hist.length
-    ? `<thead><tr><th>Wk</th><th>Game</th><th>Line</th><th>Signals</th><th>Result</th></tr></thead><tbody>${hist
+    ? `<thead><tr><th>Wk</th><th class="l">Game</th><th>Line</th><th class="l">Signals</th><th>Result</th></tr></thead><tbody>${hist
         .map((h) => {
           const cells = Object.entries(h.signals)
             .map(([k, side]) => {
@@ -704,7 +809,7 @@ function renderSpots() {
               }</span>`;
             })
             .join(" ");
-          return `<tr><td>${h.week}</td><td>${h.away} @ ${h.home}</td><td>${favLine(h.home, h.away, h.spread_line)}</td><td class="chips">${cells}</td><td>${
+          return `<tr><td>${h.week}</td><td class="l">${h.away} @ ${h.home}</td><td>${favLine(h.home, h.away, h.spread_line)}</td><td class="l"><span class="chips">${cells}</span></td><td>${
             h.home_ats === "P" ? "Push" : `${h.home_ats === "W" ? h.home : h.away} covered`
           }</td></tr>`;
         })
@@ -712,7 +817,7 @@ function renderSpots() {
     : `<tbody><tr><td class="muted">No ${model.season} games have been flagged and graded yet.</td></tr></tbody>`;
 }
 
-function spotCard(s) {
+function spotCard(s, i) {
   const final = s.home_score != null;
   const edgeSide = s.edge == null ? null : s.edge > 0 ? s.home : s.away;
   const sideLine = (t) => (t === s.home ? -s.spread_line : s.spread_line);
@@ -740,7 +845,7 @@ function spotCard(s) {
     } (graded when the week is published)</div>`;
   } else if (final) result = `<div class="spot-result muted">Final ${s.away_score}-${s.home_score}</div>`;
 
-  return `<div class="spot ${s.strength === 2 ? "spot-strong" : s.lean ? "spot-lean" : ""}">
+  return `<div class="spot ${s.strength === 2 ? "spot-strong" : s.lean ? "spot-lean" : ""}" data-k="${s.game_id}" style="--n:${i}">
     <div class="spot-head">
       <div class="spot-teams">${logo(s.away)}<b>${s.away}</b><span class="muted">@</span>${logo(s.home)}<b>${s.home}</b></div>
       <div class="muted">${gameWhen(s)}${!final && s.time ? ` · ${s.time} ET` : ""}</div>
@@ -756,7 +861,247 @@ function spotCard(s) {
   </div>`;
 }
 
+// ---------- Kicks: field-goal props from drive and red-zone profiles ----------
+
+const pct0 = (v) => (v == null ? "–" : `${Math.round(v * 100)}%`);
+const pct1 = (v) => (v == null ? "–" : `${(v * 100).toFixed(1)}%`);
+const odds = (o) => (o == null ? "–" : o > 0 ? `+${o}` : `−${Math.abs(o)}`);
+const breakEven = (o) => (o < 0 ? -o / (-o + 100) : 100 / (o + 100));
+
+// Per-game offense / defense profiles for every team under the current filters,
+// plus league averages and "stall" / "bend" scores (z of trips minus z of RZ TD %).
+function kickProfiles(L) {
+  const teams = L.stats.filter((s) => s.has_drives && s.gp);
+  if (!teams.length) return null;
+  const sum = (k) => teams.reduce((a, s) => a + s[k], 0);
+  const gp = sum("gp");
+  const lg = {
+    t40: sum("t40") / gp,
+    rz_pct: sum("rz_td") / (sum("rz") || 1),
+    fgm: sum("fgm") / gp,
+    fga_trip: sum("fga") / (sum("t40") || 1),
+  };
+  const rows = teams.map((s) => ({
+    team: s.team,
+    gp: s.gp,
+    off: { t40: s.t40 / s.gp, rz: s.rz / s.gp, rz_pct: s.off_rz_pct, fga: s.fga / s.gp, fgm: s.fgm / s.gp, fg50: s.fg50 / s.gp, fga_trip: s.off_fga_trip, kpts: (3 * s.fgm + s.xpm) / s.gp },
+    def: { t40: s.opp_t40 / s.gp, rz: s.opp_rz / s.gp, rz_pct: s.def_rz_pct, fga: s.opp_fga / s.gp, fgm: s.opp_fgm / s.gp, fg50: s.opp_fg50 / s.gp, fga_trip: s.def_fga_trip, kpts: (3 * s.opp_fgm + s.opp_xpm) / s.gp },
+  }));
+  const sd = (vals) => {
+    const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+    return Math.sqrt(vals.reduce((a, v) => a + (v - m) ** 2, 0) / vals.length) || 1;
+  };
+  for (const side of ["off", "def"]) {
+    const sdT = sd(rows.map((r) => r[side].t40));
+    const sdR = sd(rows.filter((r) => r[side].rz_pct != null).map((r) => r[side].rz_pct));
+    for (const r of rows) {
+      const p = r[side];
+      p.score = p.rz_pct == null ? null : (p.t40 - lg.t40) / sdT - (p.rz_pct - lg.rz_pct) / sdR;
+      p.target = p.rz_pct != null && p.t40 >= lg.t40 && p.rz_pct < lg.rz_pct;
+    }
+  }
+  return { lg, rows };
+}
+
+// Scatter of team logos: x = trips inside the 40 per game, y = red-zone TD %.
+// The bottom-right quadrant (above-average trips, below-average TD rate) is shaded.
+function renderScatter(box, pts, { xAvg, yAvg, xTitle, yTitle, quadLabel, aria }) {
+  const W = Math.max(box.clientWidth, 280), H = Math.round(Math.min(380, Math.max(280, W * 0.62)));
+  const m = { t: 14, r: 16, b: 40, l: 46 };
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  const pad = (lo, hi, f) => [lo - (hi - lo) * f, hi + (hi - lo) * f];
+  let [x0, x1] = pad(Math.min(...xs, xAvg), Math.max(...xs, xAvg), 0.08);
+  let [y0, y1] = pad(Math.min(...ys, yAvg), Math.max(...ys, yAvg), 0.08);
+  if (x1 - x0 < 1) [x0, x1] = [xAvg - 0.5, xAvg + 0.5];
+  if (y1 - y0 < 0.1) [y0, y1] = [yAvg - 0.05, yAvg + 0.05];
+  const x = (v) => m.l + ((v - x0) / (x1 - x0)) * (W - m.l - m.r);
+  const y = (v) => m.t + ((y1 - v) / (y1 - y0)) * (H - m.t - m.b);
+  const ticks = (lo, hi, n) => {
+    const raw = (hi - lo) / n, mag = 10 ** Math.floor(Math.log10(raw));
+    const step = [1, 2, 2.5, 5, 10].map((k) => k * mag).find((s) => s >= raw);
+    const out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(Math.round(v / step) * step);
+    return out;
+  };
+  const S = 22;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${aria}">`;
+  svg += `<rect class="quad" x="${x(xAvg)}" y="${y(yAvg)}" width="${W - m.r - x(xAvg)}" height="${H - m.b - y(yAvg)}" rx="6"/>`;
+  svg += `<text class="quad-label" x="${W - m.r - 8}" y="${H - m.b - 10}" text-anchor="end">${quadLabel}</text>`;
+  svg += `<g class="grid">`;
+  for (const v of ticks(x0, x1, 5)) svg += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t}" y2="${H - m.b}"/>`;
+  for (const v of ticks(y0, y1, 5)) svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>`;
+  svg += `</g><g class="axis">`;
+  for (const v of ticks(x0, x1, 5)) svg += `<text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${+v.toFixed(2)}</text>`;
+  for (const v of ticks(y0, y1, 5)) svg += `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${Math.round(v * 100)}%</text>`;
+  svg += `<text class="axis-title" x="${(m.l + W - m.r) / 2}" y="${H - 6}" text-anchor="middle">${xTitle}</text>`;
+  svg += `<text class="axis-title" transform="translate(12 ${(m.t + H - m.b) / 2}) rotate(-90)" text-anchor="middle">${yTitle}</text>`;
+  svg += `</g><line class="ref dash" x1="${x(xAvg)}" x2="${x(xAvg)}" y1="${m.t}" y2="${H - m.b}"/>`;
+  svg += `<line class="ref dash" x1="${m.l}" x2="${W - m.r}" y1="${y(yAvg)}" y2="${y(yAvg)}"/>`;
+  pts.forEach((p, i) => {
+    const remote = data.teams[p.team]?.logo || "";
+    svg += `<g class="dot ${p.target ? "" : "dim"}" data-i="${i}"><circle cx="${x(p.x)}" cy="${y(p.y)}" r="${S / 2 + 3}" fill="transparent"/>`;
+    svg += `<image href="logos/${p.team}.png" x="${x(p.x) - S / 2}" y="${y(p.y) - S / 2}" width="${S}" height="${S}" onerror="this.onerror=null;this.setAttribute('href','${remote}')"/></g>`;
+  });
+  svg += `</svg>`;
+  box.innerHTML = svg;
+  box.querySelectorAll(".dot").forEach((g) => {
+    const p = pts[Number(g.dataset.i)];
+    g.addEventListener("mousemove", (ev) => showTip(p.tip, ev));
+    g.addEventListener("mouseleave", hideTip);
+    g.addEventListener("click", () => openMatchup(p.team, null));
+  });
+}
+
+function kickTip(team, side, p, lg) {
+  const what = side === "off" ? "offense" : "defense (allowed)";
+  return `<div class="tt-title">${logo(team)}${data.teams[team].name} ${what}</div><div class="tt-grid">
+    <span>Trips inside 40 / g</span><span>${p.t40.toFixed(2)} <small class="muted">lg ${lg.t40.toFixed(2)}</small></span>
+    <span>Red-zone TD %</span><span>${pct0(p.rz_pct)} <small class="muted">lg ${pct0(lg.rz_pct)}</small></span>
+    <span>FG tries per trip</span><span>${p.fga_trip == null ? "–" : p.fga_trip.toFixed(2)}</span>
+    <span>FG made / g</span><span>${p.fgm.toFixed(2)}</span></div>`;
+}
+
+function renderKickTable(sel, K, side) {
+  const table = $(sel);
+  const sortState = (state.kickSort[side] ||= { key: "score", dir: "desc" });
+  const cols = [
+    { key: "gp", label: "GP", get: (r) => r.gp, show: (r) => r.gp },
+    { key: "t40", label: "Trips 40/g", title: "Trips inside the 40 per game", get: (r) => r[side].t40, show: (r) => r[side].t40.toFixed(2), sep: true },
+    { key: "rz", label: "RZ trips/g", get: (r) => r[side].rz, show: (r) => r[side].rz.toFixed(2) },
+    { key: "rz_pct", label: "RZ TD %", get: (r) => r[side].rz_pct, show: (r) => pct0(r[side].rz_pct) },
+    { key: "fga_trip", label: "FGA/trip", title: "Field-goal tries per trip inside the 40", get: (r) => r[side].fga_trip, show: (r) => (r[side].fga_trip == null ? "–" : r[side].fga_trip.toFixed(2)), sep: true },
+    { key: "fgm", label: "FGM/g", get: (r) => r[side].fgm, show: (r) => r[side].fgm.toFixed(2) },
+    { key: "kpts", label: "K pts/g", title: "Kicker points per game (3 x FG made + XP made)", get: (r) => r[side].kpts, show: (r) => r[side].kpts.toFixed(1) },
+    { key: "score", label: side === "off" ? "Stall" : "Bend", title: "Trips above average minus red-zone TD % above average, in standard deviations", get: (r) => r[side].score, sep: true,
+      show: (r) => `${r[side].target ? `<span class="pill accent">${side === "off" ? "Stall" : "Bend"}</span> ` : ""}<b>${signed(r[side].score)}</b>` },
+  ];
+  const col = cols.find((c) => c.key === sortState.key) || cols[cols.length - 1];
+  const rows = [...K.rows].sort((x, y) => {
+    const a = col.get(x), b = col.get(y);
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return (a - b) * (sortState.dir === "asc" ? 1 : -1);
+  });
+  table.tHead.innerHTML = `<tr><th>Team</th>${cols
+    .map((c) => `<th class="sortable ${c.sep ? "sep" : ""}" data-key="${c.key}" title="${c.title || ""}" ${sortState.key === c.key ? `aria-sort="${sortState.dir}ending"` : ""}>${c.label}</th>`)
+    .join("")}</tr>`;
+  table.tBodies[0].innerHTML = rows
+    .map(
+      (r, i) => `<tr data-k="${side}:${r.team}"><td class="team"><span class="rank">${i + 1}</span>${logo(r.team)}<a href="#" data-team="${r.team}">${r.team}</a></td>${cols
+        .map((c) => `<td class="${c.sep ? "sep" : ""}">${c.show(r)}</td>`)
+        .join("")}</tr>`
+    )
+    .join("");
+}
+
+function renderKicks(L) {
+  const K = kickProfiles(L);
+  const kx = model?.kicks;
+
+  // Backtest verdict
+  if (kx) {
+    const sig = kx.signals;
+    const [b0, b1] = kx.backtest_seasons || ["?", "?"];
+    const base = sig.all.backtest, sb = sig.stall_bend.backtest, p2 = sig.proj2.backtest;
+    const tile = (label, r, live, hi) => `<div class="tile ${hi ? "hi" : ""}"><div class="tile-label">${label}</div>
+      <div class="tile-value">${pct0(r.rate)}<small>n=${r.n}</small></div>
+      <div class="tile-sub">made 2+ FGs · ${r.fgm_pg ?? "–"} FGM/g${r.total_only != null ? ` · total-only price ${pct0(r.total_only)}` : ""}</div>
+      ${live ? `<div class="tile-sub muted">${kx.season}: ${live.n ? `${live.hit}/${live.n} (${pct0(live.rate)})` : "no games yet"}</div>` : ""}</div>`;
+    $("#kicks-tiles").innerHTML =
+      tile(`Every kicker, ${b0}–${b1}`, base, sig.all.live) +
+      tile("Stall offense × bend defense", sb, sig.stall_bend.live) +
+      tile(`Projects ${kx.params.flag_fgm}+ FGs made`, p2, sig.proj2.live, true);
+    const lift = (r) => (r.rate - base.rate) * 100;
+    $("#kicks-verdict").innerHTML = `Over ${b0}–${b1}, a kicker made 2+ field goals in <b>${pct0(base.rate)}</b> of games.
+      The plain <b>stall × bend</b> matchup didn't add anything (${pct0(sb.rate)}, ${signed(lift(sb))} pts, n=${sb.n}):
+      a red-zone profile on its own is mostly noise. Projecting trips × field-goal tries per trip did better: games it put at
+      ${kx.params.flag_fgm}+ FGs went over 1.5 <b>${pct0(p2.rate)}</b> of the time (n=${p2.n}), against ${pct0(p2.total_only)} for a
+      price built only on the team total. That only pays if your book's price is short of it: over 1.5 needs
+      ${pct1(breakEven(-120))} at −120 and ${pct1(breakEven(-140))} at −140. Small samples; treat it as a screen.`;
+    const live = Object.fromEntries((kx.calibration.live || []).map((r) => [r.lo, r]));
+    $("#kicks-cal").innerHTML = `<thead><tr><th>Raw projection</th><th class="sep">${b0}–${b1} games</th><th>Model P(2+)</th><th>Total-only P(2+)</th><th>Actual 2+</th><th>FGM/g</th>
+      <th class="sep">${kx.season} games</th><th>Actual 2+</th></tr></thead><tbody>${kx.calibration.backtest
+        .map((r) => {
+          const lv = live[r.lo] || {};
+          const name = r.hi == null ? `${r.lo.toFixed(1)}+ FGM` : r.lo === 0 ? `Under ${r.hi.toFixed(1)} FGM` : `${r.lo.toFixed(1)}–${r.hi.toFixed(1)} FGM`;
+          return `<tr><td>${name}</td><td class="sep">${r.n}</td><td>${pct1(r.model)}</td><td>${pct1(r.total_only)}</td><td><b>${pct1(r.rate)}</b></td><td>${r.fgm_pg ?? "–"}</td>
+            <td class="sep">${lv.n ?? 0}</td><td>${lv.n ? pct0(lv.rate) : "–"}</td></tr>`;
+        })
+        .join("")}</tbody>`;
+  } else {
+    $("#kicks-verdict").textContent = "No kicking model yet. Run backend/fetch_data.py.";
+    $("#kicks-tiles").innerHTML = $("#kicks-cal").innerHTML = "";
+  }
+
+  // This week's board (current season only)
+  const board = kx && state.season === kx.season ? kx.board || [] : [];
+  $("#kicks-board-wrap").hidden = !board.length;
+  if (board.length) {
+    $("#kicks-title").textContent = `Week ${board[0].week} kicking board`;
+    const table = $("#kicks-board");
+    table.tHead.innerHTML = `<tr><th>Kicker</th><th title="Team's implied points from the total and spread">Implied</th>
+      <th class="sep" title="Projected trips inside the 40">Trips 40</th><th title="Projected field-goal tries per trip">FGA/trip</th>
+      <th title="Raw projection of field goals made (used for the flag)">Proj FGM</th><th class="sep" title="Calibrated chance of 2+ FGs made">P(2+ FGM)</th>
+      <th title="No-vig odds for over 1.5 FGs made">Fair o1.5</th><th class="sep" title="Projected kicker points">K pts</th>
+      <th title="Chance of ${kx.params.kpts_line + 0.5}+ kicker points">P(${kx.params.kpts_line + 0.5}+)</th><th class="sep">Profile</th></tr>`;
+    table.tBodies[0].innerHTML = board
+      .map((r) => {
+        const pills = [
+          r.stall ? `<span class="pill accent" title="Offense: average-or-better trips, below-average RZ TD %">Stall O</span>` : "",
+          r.bend ? `<span class="pill accent" title="${r.opp} defense: average-or-more trips allowed, below-average RZ TD % allowed">Bend D</span>` : "",
+          r.signals.includes("proj2") ? `<span class="pill solid">Projects ${kx.params.flag_fgm}+</span>` : "",
+        ].join(" ");
+        const final = (data.upcoming || []).find((u) => u.game_id === r.game_id && u.home_score != null);
+        return `<tr data-k="b:${r.team}" class="${r.signals.length ? "flag" : ""}">
+          <td class="team">${logo(r.team)}<a href="#" data-team="${r.team}" data-opp="${r.opp}">${r.team}</a><span class="vs">${r.home ? "vs" : "@"}</span>${r.opp}${
+            final ? ` <span class="pill">Final</span>` : ""
+          }</td>
+          <td>${r.implied ?? "–"}</td>
+          <td class="sep">${r.trips.toFixed(1)}</td><td>${r.fga_per_trip.toFixed(2)}</td><td><b>${r.fgm_raw.toFixed(2)}</b></td>
+          <td class="sep"><span class="meter"><span class="track"><span class="fill" style="width:${Math.round(r.p2 * 100)}%"></span></span>${pct0(r.p2)}</span></td>
+          <td>${odds(r.p2_odds)}</td><td class="sep">${r.kpts.toFixed(1)}</td><td>${pct0(r.p_kpts)}</td>
+          <td class="sep"><span class="chips" style="justify-content:flex-end">${pills || `<span class="muted">–</span>`}</span></td></tr>`;
+      })
+      .join("");
+  }
+
+  // Scatter charts + team tables (follow the filters)
+  if (K) {
+    const mk = (side) =>
+      K.rows.filter((r) => r[side].rz_pct != null).map((r) => ({ team: r.team, x: r[side].t40, y: r[side].rz_pct, target: r[side].target, tip: kickTip(r.team, side, r[side], K.lg) }));
+    renderScatter($("#kicks-off-chart"), mk("off"), {
+      xAvg: K.lg.t40, yAvg: K.lg.rz_pct, xTitle: "Trips inside the 40 per game →", yTitle: "Red-zone TD %",
+      quadLabel: "Moves it, then kicks", aria: "Offenses: trips inside the 40 vs red-zone touchdown rate",
+    });
+    renderScatter($("#kicks-def-chart"), mk("def"), {
+      xAvg: K.lg.t40, yAvg: K.lg.rz_pct, xTitle: "Trips inside the 40 allowed per game →", yTitle: "Red-zone TD % allowed",
+      quadLabel: "Bends, doesn't break", aria: "Defenses: trips inside the 40 allowed vs red-zone touchdown rate allowed",
+    });
+    renderKickTable("#kicks-off", K, "off");
+    renderKickTable("#kicks-def", K, "def");
+  } else {
+    for (const id of ["#kicks-off-chart", "#kicks-def-chart"]) $(id).innerHTML = `<p class="muted">No drive data for this season yet.</p>`;
+  }
+
+  // Flagged kickers this season, graded
+  const hist = kx?.live_history || [];
+  $("#kicks-history").innerHTML = hist.length
+    ? `<thead><tr><th>Wk</th><th class="l">Kicker</th><th class="l">Flags</th><th>Proj FGM</th><th>P(2+)</th><th>FG made</th><th>K pts</th><th>Over 1.5</th></tr></thead><tbody>${hist
+        .map((h) => {
+          const hit = h.fgm_actual >= 2;
+          return `<tr><td>${h.week}</td><td class="l">${h.team} ${h.home ? "vs" : "@"} ${h.opp}</td><td class="l"><span class="chips">${h.signals
+            .map((k) => `<span class="chip chip-on">${k === "proj2" ? `Projects ${kx.params.flag_fgm}+` : "Stall × bend"}</span>`)
+            .join("")}</span></td><td>${h.fgm_raw.toFixed(2)}</td><td>${pct0(h.p2)}</td><td>${h.fgm_actual}/${h.fga_actual}</td><td>${h.kpts_actual}</td>
+            <td><span class="chip ${hit ? "chip-win" : "chip-loss"}">${hit ? "✓ over" : "✗ under"}</span></td></tr>`;
+        })
+        .join("")}</tbody>`
+    : `<tbody><tr><td class="muted">No ${kx?.season ?? ""} kickers have been flagged and graded yet.</td></tr></tbody>`;
+}
+
 // ---------- routing & wiring ----------
+
+const VIEWS = ["league", "matchup", "ats", "spots", "kicks"];
+const VIEW_NAMES = { league: "League", matchup: "Matchup", ats: "vs Spread", spots: "Spots", kicks: "Kicks" };
 
 function writeHash() {
   const p = new URLSearchParams();
@@ -767,39 +1112,103 @@ function writeHash() {
 
 function readHash() {
   const [view, q] = location.hash.slice(1).split("?");
-  if (["league", "matchup", "ats", "spots"].includes(view)) state.view = view;
+  if (VIEWS.includes(view)) state.view = view;
   const p = new URLSearchParams(q || "");
   if (p.get("season")) state.season = Number(p.get("season"));
   if (p.get("a")) state.a = p.get("a");
   if (p.get("b")) state.b = p.get("b");
 }
 
+let lastView = null;
+
 function render() {
+  const sec = $(`#view-${state.view}`);
+  const switched = lastView !== state.view;
+  // Same view re-rendering (sort, filter, season): rows travel to their new spots.
+  const before = switched ? null : snapshot(sec);
   const L = leagueStats();
-  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.view === state.view));
-  $("#view-league").hidden = state.view !== "league";
-  $("#view-matchup").hidden = state.view !== "matchup";
-  $("#view-ats").hidden = state.view !== "ats";
-  $("#view-spots").hidden = state.view !== "spots";
+  document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.view === state.view));
+  for (const v of VIEWS) $(`#view-${v}`).hidden = state.view !== v;
   document.querySelectorAll("#mode-seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === state.mode));
   const upd = new Date(data.updated);
   $("#updated").textContent = `${data.season} season · through ${weekLabel(data.last_week)} · updated ${upd.toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   })}`;
+  $("#tb-ctx").textContent = `${VIEW_NAMES[state.view]} · ${state.season}`;
   renderUpcoming(L);
   if (state.view === "league") renderLeague(L);
   else if (state.view === "matchup") renderMatchup(L);
   else if (state.view === "ats") renderATS();
-  else renderSpots();
+  else if (state.view === "spots") renderSpots();
+  else renderKicks(L);
+  if (switched) {
+    replay(sec, "on");
+    sec.querySelectorAll(".list").forEach((l) => replay(l, "enter"));
+  } else flip(sec, before);
+  glideAll();
   writeHash();
+  lastView = state.view;
 }
 
 function openMatchup(a, b) {
   state.view = "matchup";
   state.a = a;
   if (b) state.b = b;
+  else {
+    const up = (data.upcoming || []).find((g) => g.home === a || g.away === a);
+    if (up) state.b = up.home === a ? up.away : up.home;
+    else if (state.b === a) state.b = null;
+  }
   render();
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo({ top: 0, behavior: REDUCE.matches ? "auto" : "smooth" });
+}
+
+// Sticky glass header that gains a shadow once scrolled, and a filter toolbar
+// that pins into a floating glass card. Pinning is detected with an
+// IntersectionObserver on a 0-height sentinel, and the toolbar's footprint is
+// frozen at its open height so pinning never moves the page.
+function setupChrome() {
+  const header = $("#site-header"), wrap = $("#tb-wrap"), bar = $("#toolbar");
+  const wide = matchMedia("(min-width: 641px)");
+  new IntersectionObserver(([e]) => header.classList.toggle("scrolled", !e.isIntersecting)).observe($("#top-sentinel"));
+  let io;
+  const setup = () => {
+    const h = header.offsetHeight;
+    document.documentElement.style.setProperty("--hdr", `${h}px`);
+    const pinned = wrap.classList.contains("pinned");
+    wrap.classList.add("measuring");
+    wrap.classList.remove("pinned");
+    wrap.style.height = "";
+    wrap.style.height = wide.matches ? `${bar.offsetHeight}px` : "";
+    if (pinned) wrap.classList.add("pinned");
+    void wrap.offsetWidth;
+    wrap.classList.remove("measuring");
+    io?.disconnect();
+    io = new IntersectionObserver(
+      ([e]) => wrap.classList.toggle("pinned", wide.matches && !e.isIntersecting && e.boundingClientRect.top < h + 1),
+      { rootMargin: `-${h + 1}px 0px 0px 0px` }
+    );
+    io.observe($("#tb-sentinel"));
+  };
+  setup();
+  let t;
+  window.addEventListener("resize", () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      setup();
+      glideAll();
+      if (state.view !== "league") render();
+    }, 150);
+  });
+  document.fonts?.ready.then(() => {
+    setup();
+    glideAll();
+  });
+}
+
+function sortClick(sortObj, key, defaultDir = "desc") {
+  if (sortObj.key === key) sortObj.dir = sortObj.dir === "desc" ? "asc" : "desc";
+  else Object.assign(sortObj, { key, dir: defaultDir });
 }
 
 function wire() {
@@ -822,39 +1231,41 @@ function wire() {
   $("#ats-table").tHead.addEventListener("click", (e) => {
     const th = e.target.closest("th[data-key]");
     if (!th) return;
-    const key = th.dataset.key;
-    if (state.atsSort.key === key) state.atsSort.dir = state.atsSort.dir === "desc" ? "asc" : "desc";
-    else state.atsSort = { key, dir: key === "team" ? "asc" : "desc" };
+    sortClick(state.atsSort, th.dataset.key, th.dataset.key === "team" ? "asc" : "desc");
     render();
   });
-  document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => { state.view = b.dataset.view; render(); }));
+  for (const side of ["off", "def"]) {
+    $(`#kicks-${side}`).tHead.addEventListener("click", (e) => {
+      const th = e.target.closest("th[data-key]");
+      if (!th) return;
+      sortClick((state.kickSort[side] ||= { key: "score", dir: "desc" }), th.dataset.key);
+      render();
+    });
+  }
+  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => { state.view = b.dataset.view; render(); }));
+  // Arrow keys move between tabs.
+  $("#tabs").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const i = VIEWS.indexOf(state.view) + (e.key === "ArrowRight" ? 1 : -1);
+    state.view = VIEWS[(i + VIEWS.length) % VIEWS.length];
+    render();
+    $(`#tabs [data-view="${state.view}"]`).focus();
+  });
 
   $("#league").tHead.addEventListener("click", (e) => {
     const th = e.target.closest("th[data-key]");
     if (!th) return;
     const key = th.dataset.key;
-    if (state.sort.key === key) state.sort.dir = state.sort.dir === "desc" ? "asc" : "desc";
-    else {
-      const m = METRICS[key];
-      state.sort = { key, dir: key === "team" ? "asc" : m && m.better < 0 ? "asc" : "desc" };
-    }
+    const m = METRICS[key];
+    sortClick(state.sort, key, key === "team" ? "asc" : m && m.better < 0 ? "asc" : "desc");
     render();
   });
-  $("#league").tBodies[0].addEventListener("click", (e) => {
-    const a = e.target.closest("a[data-team]");
+  // Team links anywhere in the tables open that team's matchup (vs its next opponent).
+  document.querySelector("main").addEventListener("click", (e) => {
+    const a = e.target.closest("tbody a[data-team]");
     if (!a) return;
     e.preventDefault();
-    const t = a.dataset.team;
-    const up = (data.upcoming || []).find((g) => g.home === t || g.away === t);
-    openMatchup(t, up ? (up.home === t ? up.away : up.home) : state.b === t ? null : state.b);
-  });
-  $("#ats-table").tBodies[0].addEventListener("click", (e) => {
-    const a = e.target.closest("a[data-team]");
-    if (!a) return;
-    e.preventDefault();
-    const t = a.dataset.team;
-    const up = (data.upcoming || []).find((g) => g.home === t || g.away === t);
-    openMatchup(t, up ? (up.home === t ? up.away : up.home) : state.b === t ? null : state.b);
+    openMatchup(a.dataset.team, a.dataset.opp || null);
   });
   $("#upcoming").addEventListener("click", (e) => {
     const g = e.target.closest(".game");
@@ -863,12 +1274,7 @@ function wire() {
   $("#m-a").addEventListener("change", (e) => { state.a = e.target.value; render(); });
   $("#m-b").addEventListener("change", (e) => { state.b = e.target.value; render(); });
   $("#m-swap").addEventListener("click", () => { [state.a, state.b] = [state.b, state.a]; render(); });
-
-  let t;
-  window.addEventListener("resize", () => {
-    clearTimeout(t);
-    t = setTimeout(() => state.view !== "league" && render(), 150);
-  });
+  setupChrome();
 }
 
 async function init() {

@@ -4,58 +4,71 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NFL Turnover Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="site-header">
+  <div id="top-sentinel" class="tb-sentinel"></div>
+  <header class="site-header glass-bar" id="site-header">
     <div class="wrap header-row">
-      <div>
-        <h1>NFL Turnover Tracker</h1>
+      <div class="brand">
+        <h1>NFL <span class="mark">Turnover</span> Tracker</h1>
         <p class="sub" id="updated">Loading data…</p>
       </div>
-      <nav class="tabs" role="tablist">
-        <button role="tab" data-view="league" aria-selected="true">League</button>
-        <button role="tab" data-view="matchup" aria-selected="false">Matchup</button>
-        <button role="tab" data-view="ats" aria-selected="false">vs Spread</button>
-        <button role="tab" data-view="spots" aria-selected="false">Spots</button>
-      </nav>
+      <div class="tabs-scroll">
+        <nav class="seg tabs" id="tabs" role="tablist" aria-label="Views">
+          <button role="tab" data-view="league" aria-selected="true">League</button>
+          <button role="tab" data-view="matchup" aria-selected="false">Matchup</button>
+          <button role="tab" data-view="ats" aria-selected="false">vs Spread</button>
+          <button role="tab" data-view="spots" aria-selected="false">Spots</button>
+          <button role="tab" data-view="kicks" aria-selected="false">Kicks</button>
+        </nav>
+      </div>
     </div>
   </header>
 
   <main class="wrap">
-    <section class="filters" aria-label="Filters">
-      <label>Season <select id="f-season"></select></label>
-      <label>Games
-        <select id="f-type">
-          <option value="REG">Regular season</option>
-          <option value="POST">Playoffs</option>
-          <option value="ALL">All games</option>
-        </select>
-      </label>
-      <label>Span
-        <select id="f-span">
-          <option value="0">Full season</option>
-          <option value="3">Last 3 games</option>
-          <option value="5">Last 5 games</option>
-          <option value="8">Last 8 games</option>
-        </select>
-      </label>
-      <label>Venue
-        <select id="f-venue">
-          <option value="all">Home &amp; away</option>
-          <option value="home">Home only</option>
-          <option value="away">Away only</option>
-        </select>
-      </label>
-      <div class="seg" id="mode-seg" role="group" aria-label="Stat mode">
-        <button data-mode="pg" aria-pressed="true">Per game</button>
-        <button data-mode="tot" aria-pressed="false">Totals</button>
-      </div>
-    </section>
+    <div id="tb-sentinel" class="tb-sentinel"></div>
+    <div class="toolbar-wrap" id="tb-wrap">
+      <section class="toolbar" id="toolbar" aria-label="Filters">
+        <div class="filters">
+          <label><span>Season</span> <select id="f-season"></select></label>
+          <label><span>Games</span>
+            <select id="f-type">
+              <option value="REG">Regular season</option>
+              <option value="POST">Playoffs</option>
+              <option value="ALL">All games</option>
+            </select>
+          </label>
+          <label><span>Span</span>
+            <select id="f-span">
+              <option value="0">Full season</option>
+              <option value="3">Last 3 games</option>
+              <option value="5">Last 5 games</option>
+              <option value="8">Last 8 games</option>
+            </select>
+          </label>
+          <label><span>Venue</span>
+            <select id="f-venue">
+              <option value="all">Home &amp; away</option>
+              <option value="home">Home only</option>
+              <option value="away">Away only</option>
+            </select>
+          </label>
+        </div>
+        <div class="seg" id="mode-seg" role="group" aria-label="Stat mode">
+          <button data-mode="pg" aria-pressed="true">Per game</button>
+          <button data-mode="tot" aria-pressed="false">Totals</button>
+        </div>
+        <span class="tb-ctx" id="tb-ctx" aria-hidden="true"></span>
+      </section>
+    </div>
 
     <section id="upcoming-wrap" hidden>
       <h2 class="section-title" id="upcoming-title">Upcoming games</h2>
-      <div id="upcoming" class="upcoming"></div>
+      <div id="upcoming" class="upcoming list"></div>
     </section>
 
     <section id="view-league" class="view">
@@ -76,9 +89,9 @@
 
     <section id="view-matchup" class="view" hidden>
       <div class="matchup-pick">
-        <label>Team A <select id="m-a"></select></label>
-        <button id="m-swap" class="ghost" title="Swap teams" aria-label="Swap teams">⇄</button>
-        <label>Team B <select id="m-b"></select></label>
+        <label><span class="micro">Team A</span> <select id="m-a"></select></label>
+        <button id="m-swap" class="btn icon" title="Swap teams" aria-label="Swap teams">⇄</button>
+        <label><span class="micro">Team B</span> <select id="m-b"></select></label>
       </div>
       <div id="m-line" class="m-line"></div>
       <div id="m-compare" class="compare"></div>
@@ -102,8 +115,8 @@
         </div>
         <span class="muted" id="ats-scope"></span>
       </div>
-      <div id="ats-tiles" class="tiles"></div>
-      <div class="ats-charts">
+      <div id="ats-tiles" class="tiles list"></div>
+      <div class="two-up">
         <div class="card">
           <h3 class="card-title">Cover rate by turnover margin in the game</h3>
           <p class="card-sub">What happened: how often a team covered given the turnover margin it finished with. It explains
@@ -129,14 +142,15 @@
         Span and Venue filters apply here too. The 50% line is break-even before the vig (about 52.4% at −110).
       </p>
     </section>
+
     <section id="view-spots" class="view" hidden>
       <div class="card verdict-card">
         <h3 class="card-title">How the spread signals have done</h3>
         <p id="spots-verdict" class="card-sub"></p>
         <div class="table-scroll"><table id="spots-backtest" class="stats"></table></div>
       </div>
-      <h2 class="section-title" id="spots-title"></h2>
-      <div id="spots" class="spots"></div>
+      <h2 class="section-title big" id="spots-title"></h2>
+      <div id="spots" class="spots list"></div>
       <div class="card">
         <h3 class="card-title">Flagged games this season</h3>
         <div class="table-scroll"><table id="spots-history" class="stats log"></table></div>
@@ -146,18 +160,79 @@
         luck), blended with last season and pulled toward average. It adds 1.5 points for home field and compares the
         result to the spread. <b>Turnover fade</b>: backs the team whose season turnover margin is much worse than its
         opponent's, betting on regression. Signals use only games played before kickoff. The market line is nflverse's
-        number as of the last data refresh (Tuesday) and moves during the week, so compare the model's fair line with
+        number as of the last data refresh (every morning at 8am ET) and moves during the day, so compare the model's fair line with
         your sportsbook's current line.
+      </p>
+    </section>
+
+    <section id="view-kicks" class="view" hidden>
+      <div class="card verdict-card">
+        <h3 class="card-title">Do “drive but stall” matchups produce extra field goals?</h3>
+        <p id="kicks-verdict" class="card-sub"></p>
+        <div id="kicks-tiles" class="tiles list"></div>
+        <div class="table-scroll"><table id="kicks-cal" class="stats cal"></table></div>
+      </div>
+
+      <div id="kicks-board-wrap">
+        <h2 class="section-title big" id="kicks-title"></h2>
+        <div class="card">
+          <p class="card-sub" style="margin-bottom:10px">Each row is one team's kicker. Highlighted rows meet a flag. Compare the
+            fair odds with your book's price for <b>over 1.5 field goals made</b> and the kicker points line.</p>
+          <div class="table-scroll"><table id="kicks-board" class="stats kick-board"><thead></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <h2 class="section-title big">Who drives the field but kicks</h2>
+      <div class="two-up">
+        <div class="card">
+          <h3 class="card-title">Offenses: get deep, then stall</h3>
+          <p class="card-sub">Trips inside the opponent's 40 per game against the share of red-zone trips that end in a
+            touchdown. The shaded corner moves the ball but settles for field goals.</p>
+          <div id="kicks-off-chart" class="chart"></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Defenses: bend, don't break</h3>
+          <p class="card-sub">Trips inside the 40 allowed per game against the red-zone TD rate allowed. The shaded corner
+            gives up yards but holds opponents to field goals.</p>
+          <div id="kicks-def-chart" class="chart"></div>
+        </div>
+      </div>
+      <div class="two-up">
+        <div class="card">
+          <h3 class="card-title">Red-zone stall offenses</h3>
+          <div class="table-scroll"><table id="kicks-off" class="stats"><thead></thead><tbody></tbody></table></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Bend-don't-break defenses</h3>
+          <div class="table-scroll"><table id="kicks-def" class="stats"><thead></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title">Flagged kickers this season</h3>
+        <div class="table-scroll"><table id="kicks-history" class="stats log"></table></div>
+      </div>
+      <p class="note">
+        <b>Trip inside the 40</b>: a drive that ran at least one snap from the opponent's 40 or closer.
+        <b>Red-zone TD %</b>: drives with a snap inside the 20 that ended in a touchdown. <b>Stall</b> offenses
+        reach the 40 at least as often as the league average but score touchdowns on fewer red-zone trips than average;
+        <b>Bend</b> defenses allow at least an average number of trips but fewer red-zone touchdowns than average.
+        <b>Stall / Bend score</b> = how far above average the trips are minus how far above average the red-zone TD rate is
+        (in league standard deviations). The projection multiplies expected trips by expected field-goal tries per trip
+        and the team's make rate, using only games before kickoff. Field goals are noisy, so the probabilities pull the
+        projection most of the way back to league average (see the calibration table). <b>Implied</b> is the team's
+        share of the game total from the spread. The charts and team tables follow the filters; the board and backtest
+        use regular-season games only.
       </p>
     </section>
   </main>
 
   <footer class="wrap footer">
     Data: <a href="https://github.com/nflverse">nflverse</a> play-by-play via <code>nflreadpy</code>. Lines are nflverse's
-    consensus spread/total; spread shown from the favorite's side.
+    consensus spread/total, refreshed every morning at 8am ET; spread shown from the favorite's side.
   </footer>
 
-  <div id="tooltip" class="tooltip" role="status" hidden></div>
+  <div id="tooltip" class="tooltip" role="status"></div>
   <script src="app.js"></script>
 </body>
 </html>
