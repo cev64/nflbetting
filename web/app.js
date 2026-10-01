@@ -9,7 +9,7 @@ const state = {
   span: 0,
   venue: "all",
   mode: "pg",
-  view: "league",
+  view: "under",
   a: null,
   b: null,
   sort: { key: "diff", dir: "desc" },
@@ -1278,10 +1278,130 @@ function renderDumbbells(box, spots) {
   });
 }
 
+// ---------- 1H Under: chance each game is 24 or fewer at halftime ----------
+
+const UNDER_PRICES = [-150, -200, -250]; // break-even reference lines
+const TOP_N = 3;
+
+function renderUnder() {
+  const fh = model?.first_half;
+  const box = $("#under-chart");
+  if (!fh) {
+    $("#under-lede").textContent = "No first-half model yet. Run backend/fetch_data.py.";
+    box.innerHTML = "";
+    return;
+  }
+  const board = fh.board || [];
+  const bt = fh.backtest, lv = fh.live;
+  const seasons = fh.backtest_seasons;
+  const span = seasons.length ? `${seasons[0]}–${seasons[seasons.length - 1]}` : "";
+  $("#under-title").textContent = board.length ? `Week ${board[0].week}: chance of 24 or fewer at half` : "First-half under 24.5";
+  $("#under-lede").innerHTML = `Ranked best to worst. Bet a game only when your book's under 24.5 price is better than the fair price on the right.
+    The week's top 3 went under <b>${pct0(bt.top3.rate)}</b> of the time in ${span} (${bt.top3.under} of ${bt.top3.n}); every game, ${pct0(bt.all.rate)}.`;
+  if (!board.length) box.innerHTML = `<p class="muted">No upcoming games in the schedule.</p>`;
+  else renderUnderChart(box, board);
+
+  // How this was tested
+  const tile = (label, r, sub, hi) => `<div class="tile ${hi ? "hi" : ""}"><div class="tile-label">${label}</div>
+    <div class="tile-value">${pct0(r.rate)}<small>${r.under} of ${r.n}</small></div><div class="tile-sub">${sub}</div></div>`;
+  $("#under-tiles").innerHTML =
+    tile(`Every game, ${span}`, bt.all, `24 or fewer at half · model said ${pct0(bt.all.avg_p)}`) +
+    tile("Top 3 each week", bt.top3, `model said ${pct0(bt.top3.avg_p)} · ${fh.season}: ${lv.top3.n ? `${lv.top3.under} of ${lv.top3.n}` : "none yet"}`, true) +
+    tile("Model 70%+", bt.p70, `model said ${pct0(bt.p70.avg_p)} · ${fh.season}: ${lv.p70.n ? `${lv.p70.under} of ${lv.p70.n}` : "none yet"}`);
+  const be = (o) => pct1(breakEven(o));
+  $("#under-notes").innerHTML = `<b>How it works:</b> the projection is ${fh.coef ? `${fh.coef.intercept} + ${fh.coef.per_total_point} × the full-game total` : "fitted on past seasons"},
+    and the chance of 24 or fewer comes from how far real halftime scores landed from that projection in past seasons.
+    Each team's first-half scoring (points scored and allowed) was tested as a second input but didn't improve the forecast
+    (Brier ${bt.all.brier_profile} with it vs ${bt.all.brier} without; lower is better, ${bt.all.brier_base} for a flat base rate):
+    the market's total already reflects it. <b>What can't be tested:</b> nflverse has no first-half odds, so this measures how
+    accurate the probabilities are, not whether betting them made money. Break-even is ${be(-150)} at −150, ${be(-200)} at −200, ${be(-250)} at −250.`;
+  const live = Object.fromEntries((fh.calibration.live || []).map((r) => [r.lo, r]));
+  $("#under-cal").innerHTML = `<thead><tr><th>Model said</th><th class="sep">${span} games</th><th>Avg model</th><th>Actually under</th>
+    <th class="sep">${fh.season} games</th><th>Actually under</th></tr></thead><tbody>${fh.calibration.backtest
+      .map((r) => {
+        const l = live[r.lo] || {};
+        const name = r.lo === 0 ? `Under ${pct0(r.hi)}` : r.hi >= 1 ? `${pct0(r.lo)}+` : `${pct0(r.lo)}–${pct0(r.hi)}`;
+        return `<tr><td>${name}</td><td class="sep">${r.n}</td><td>${pct1(r.avg_p)}</td><td><b>${r.n ? `${pct1(r.rate)}` : "–"}</b> <span class="muted">${r.under}/${r.n}</span></td>
+          <td class="sep">${l.n || 0}</td><td>${l.n ? `${pct0(l.rate)} <span class="muted">${l.under}/${l.n}</span>` : "–"}</td></tr>`;
+      })
+      .join("")}</tbody>`;
+  const hist = fh.live_history || [];
+  $("#under-history").innerHTML = hist.length
+    ? `<thead><tr><th>Wk</th><th class="l">Game</th><th>Total</th><th>Model</th><th>Halftime pts</th><th>Under 24.5</th></tr></thead><tbody>${hist
+        .map((h) => {
+          const hit = h.h1 <= fh.line;
+          return `<tr><td>${h.week}</td><td class="l">${h.away} @ ${h.home}</td><td>${h.total}</td><td>${pct0(h.p)}</td><td>${h.h1}</td>
+            <td><span class="chip ${hit ? "chip-win" : "chip-loss"}">${hit ? "✓ under" : "✗ over"}</span></td></tr>`;
+        })
+        .join("")}</tbody>`
+    : `<tbody><tr><td class="muted">No ${fh.season} games graded yet.</td></tr></tbody>`;
+}
+
+// One row per game: a dot at the chance of 24 or fewer at half, with dashed
+// break-even lines for common under 24.5 prices. Right label: chance and fair price.
+function renderUnderChart(box, board) {
+  const W = Math.max(box.clientWidth, 280), RH = 40, narrow = W < 560;
+  const m = { t: narrow ? 38 : 26, r: narrow ? 66 : 132, b: 8, l: narrow ? 128 : 168 };
+  const H = m.t + board.length * RH + m.b;
+  const lo = narrow ? 0.4 : 0.3, hi = narrow ? 0.8 : 0.85;
+  const x = (v) => m.l + ((Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo)) * (W - m.l - m.r);
+  const top = new Set(board.filter((g) => g.p != null).slice(0, TOP_N).map((g) => g.game_id));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Chance each game is 24 or fewer at halftime"><g class="grid">`;
+  for (let v = lo; v <= hi + 1e-9; v += 0.1) svg += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t - 4}" y2="${H - m.b}"/>`;
+  svg += `</g>`;
+  UNDER_PRICES.forEach((o, k) => {
+    const v = breakEven(o);
+    // On narrow screens the lines sit close together, so stagger short labels.
+    const ty = narrow ? m.t - 10 - (k % 2) * 13 : m.t - 12;
+    svg += `<line class="ref dash" x1="${x(v)}" x2="${x(v)}" y1="${ty + 3}" y2="${H - m.b}"/>`;
+    svg += `<text class="rowsub" x="${x(v)}" y="${ty}" text-anchor="middle">−${-o}${narrow ? "" : ` · ${Math.round(v * 100)}%`}</text>`;
+  });
+  board.forEach((g, i) => {
+    const cy = m.t + i * RH + RH / 2;
+    const isTop = top.has(g.game_id);
+    const logoAt = (t, lx) => `<image href="logos/${t}.png" x="${lx}" y="${cy - 17}" width="16" height="16" onerror="this.onerror=null;this.setAttribute('href','${data.teams[t]?.logo || ""}')"/>`;
+    svg += `<g class="rrow" data-i="${i}"><rect class="row-hit" x="0" y="${cy - RH / 2}" width="${W}" height="${RH}" rx="6"/>`;
+    svg += logoAt(g.away, 4) + `<text class="rowlabel" x="24" y="${cy - 4}">${g.away}</text><text class="rowsub" x="57" y="${cy - 4}">@</text>`;
+    svg += logoAt(g.home, 72) + `<text class="rowlabel" x="92" y="${cy - 4}">${g.home}</text>`;
+    const final = g.home_score != null;
+    const sub = final ? `Final ${g.away_score}-${g.home_score}` : `${gameWhen(g).split(",")[0]}${g.total_line != null ? ` · total ${g.total_line}` : ""}`;
+    svg += `<text class="rowsub" x="4" y="${cy + 13}">${sub}</text>`;
+    if (g.p == null) {
+      svg += `<text class="rowsub" x="${m.l + 6}" y="${cy + 4}">no line yet</text></g>`;
+      return;
+    }
+    svg += `<line class="db-line ${isTop ? "flagged" : ""}" x1="${x(lo)}" x2="${x(g.p)}" y1="${cy}" y2="${cy}"/>`;
+    svg += `<circle class="db-model ${isTop ? "flagged" : ""}" cx="${x(g.p)}" cy="${cy}" r="7"/>`;
+    svg += `<text class="val ${isTop ? "flagged" : ""}" x="${W - m.r + 12}" y="${cy - 1}" style="font-size:15px">${pct0(g.p)}</text>`;
+    svg += `<text class="rowsub" x="${W - m.r + 12}" y="${cy + 13}">fair ${odds(g.fair_odds)}</text></g>`;
+  });
+  box.innerHTML = svg + `</svg>`;
+  box.querySelectorAll(".rrow").forEach((el) => {
+    const g = board[Number(el.dataset.i)];
+    const team = (t) => {
+      const s = g.teams[t];
+      if (!s || !s.n) return [`${t} 1H pts for / against`, "no games yet"];
+      return [`${t} 1H pts for / against`, `${s.scored.toFixed(1)} / ${s.allowed.toFixed(1)}, ${s.under} of ${s.n} under`];
+    };
+    const html = `<div class="tt-title">${g.away} @ ${g.home} · ${gameWhen(g)}${g.time ? ` ${g.time} ET` : ""}</div>` + ttGrid([
+      ["Full-game total", g.total_line ?? "no line yet"],
+      ["Spread", lineText(g).split(" · ")[0]],
+      ["Projected 1H points", g.proj == null ? "–" : `${g.proj} (80%: ${Math.round(g.lo)}–${Math.round(g.hi)})`],
+      ["Chance of 24 or fewer", g.p == null ? "–" : pct0(g.p)],
+      ["Fair price, under 24.5", odds(g.fair_odds)],
+      team(g.away),
+      team(g.home),
+    ]);
+    el.addEventListener("mousemove", (ev) => showTip(html, ev));
+    el.addEventListener("mouseleave", hideTip);
+    el.addEventListener("click", () => openMatchup(g.away, g.home));
+  });
+}
+
 // ---------- routing & wiring ----------
 
-const VIEWS = ["league", "matchup", "ats", "spots", "kicks"];
-const VIEW_NAMES = { league: "League", matchup: "Matchup", ats: "vs Spread", spots: "Spots", kicks: "Kicks" };
+const VIEWS = ["under", "league", "matchup", "ats", "spots", "kicks"];
+const VIEW_NAMES = { under: "1H Under", league: "League", matchup: "Matchup", ats: "vs Spread", spots: "Spots", kicks: "Kicks" };
 
 function writeHash() {
   const p = new URLSearchParams();
@@ -1309,6 +1429,8 @@ function render() {
   const L = leagueStats();
   document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.view === state.view));
   for (const v of VIEWS) $(`#view-${v}`).hidden = state.view !== v;
+  document.body.dataset.view = state.view;
+  if (switched) chromeSetup?.();
   document.querySelectorAll("#mode-seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === state.mode));
   const upd = new Date(data.updated);
   $("#updated").textContent = `${data.season} season · through ${weekLabel(data.last_week)} · updated ${upd.toLocaleString(undefined, {
@@ -1320,6 +1442,7 @@ function render() {
   else if (state.view === "matchup") renderMatchup(L);
   else if (state.view === "ats") renderATS();
   else if (state.view === "spots") renderSpots();
+  else if (state.view === "under") renderUnder();
   else renderKicks(L);
   if (switched) {
     replay(sec, "on");
@@ -1347,6 +1470,8 @@ function openMatchup(a, b) {
 // that pins into a floating glass card. Pinning is detected with an
 // IntersectionObserver on a 0-height sentinel, and the toolbar's footprint is
 // frozen at its open height so pinning never moves the page.
+let chromeSetup = null; // re-measures the sticky toolbar (it's hidden on some views)
+
 function setupChrome() {
   const header = $("#site-header"), wrap = $("#tb-wrap"), bar = $("#toolbar");
   const wide = matchMedia("(min-width: 641px)");
@@ -1370,6 +1495,7 @@ function setupChrome() {
     );
     io.observe($("#tb-sentinel"));
   };
+  chromeSetup = setup;
   setup();
   let t;
   window.addEventListener("resize", () => {

@@ -297,7 +297,7 @@ table.stats { border-collapse: collapse; width: 100%; }
 
 /* tooltip: popover glass */
 .tooltip {
-  position: fixed; pointer-events: none; z-index: 60; color: var(--ink); max-width: 280px;
+  position: fixed; pointer-events: none; z-index: 60; color: var(--ink); max-width: 340px;
   background: rgba(255,255,255,.9); -webkit-backdrop-filter: blur(18px) saturate(1.7); backdrop-filter: blur(18px) saturate(1.7);
   border: 1px solid rgba(8,32,79,.08); box-shadow: 0 18px 44px rgba(8,32,79,.16), 0 2px 8px rgba(8,32,79,.06);
   border-radius: 12px; padding: 9px 12px; font-size: 12px; left: 0; top: 0;
@@ -309,6 +309,7 @@ table.stats { border-collapse: collapse; width: 100%; }
 .tooltip .tt-row i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .tooltip .tt-grid { display: grid; grid-template-columns: auto auto; gap: 1px 14px; }
 .tooltip .tt-grid span:nth-child(odd) { color: var(--ink-3); }
+.tooltip .tt-grid span:nth-child(odd) { white-space: nowrap; }
 .tooltip .tt-grid span:nth-child(even) { text-align: right; font-weight: 600; }
 
 .footer { color: var(--ink-3); font-size: 12px; padding-top: 28px; padding-bottom: 36px; border-top: 1px solid var(--line); margin-top: 28px; }
@@ -375,7 +376,7 @@ td.sig .muted { font-size: 11.5px; }
   h1 { font-size: 21px; }
   .tabs-scroll { width: calc(100% + 4px); }
   .tabs { display: flex; width: 100%; }
-  .tabs button { flex: 1 1 auto; padding: 6px 8px; font-size: 12.5px; }
+  .tabs button { flex: 1 1 auto; padding: 6px 7px; font-size: 12px; }
   .chart .quad-label { font-size: 9.5px; }
 }
 
@@ -452,4 +453,14 @@ td.sig .muted { font-size: 11.5px; }
   .bf-row { grid-template-columns: 46px minmax(0,1fr) 88px minmax(0,1fr) 46px; gap: 6px; padding: 5px 12px; }
   .bf-row .lbl { font-size: 11px; }
   .bf-head .nm { font-size: 18px; }
+}
+
+/* The 1H Under tab is a single chart: filters and the games strip don't apply to it. */
+body[data-view="under"] #tb-wrap, body[data-view="under"] #upcoming-wrap { display: none; }
+body[data-view="under"] main.wrap { padding-top: 18px; }
+.tab-short { display: none; }
+@media (max-width: 640px) {
+  .tabs button { padding: 6px 6px; }
+  .tab-long { display: none; }
+  .tab-short { display: inline; }
 }

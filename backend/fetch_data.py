@@ -23,6 +23,7 @@ from pathlib import Path
 import nflreadpy as nfl
 import polars as pl
 
+from firsthalf import first_half_report
 from kicks import kicks_report
 from model import model_report
 
@@ -109,6 +110,22 @@ def kicking_stats(pbp: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def halftime_scores(pbp: pl.DataFrame) -> pl.DataFrame:
+    """Each game's score at halftime (all scoring: offense, defense, returns, PATs).
+
+    total_home_score / total_away_score are the running score after each play and
+    never decrease, so the first-half maximum is the halftime score.
+    """
+    return (
+        pbp.filter(pl.col("game_half") == "Half1")
+        .group_by("game_id")
+        .agg(
+            pl.col("total_home_score").max().alias("h1_home"),
+            pl.col("total_away_score").max().alias("h1_away"),
+        )
+    )
+
+
 # Drive and kicking columns, stored for the team's offense and (prefixed opp_)
 # for the opponent's offense, i.e. what the team's defense allowed.
 DRIVE_KEYS = ["drives", "t40", "rz", "rz_td", "td", "fga", "fgm", "fg50", "xpa", "xpm"]
@@ -149,6 +166,12 @@ def build_season(season: int) -> dict:
         pl.col("total_line").alias("total"),
     )
     games = pl.concat([home, away])
+    # First-half points for and against, from the team's side (null if the game has no pbp).
+    ht = halftime_scores(pbp)
+    games = games.join(ht, on="game_id", how="left").with_columns(
+        pl.when(pl.col("home")).then(pl.col("h1_home")).otherwise(pl.col("h1_away")).cast(pl.Int32).alias("h1_pf"),
+        pl.when(pl.col("home")).then(pl.col("h1_away")).otherwise(pl.col("h1_home")).cast(pl.Int32).alias("h1_pa"),
+    ).drop("h1_home", "h1_away")
 
     to = (
         turnover_plays(pbp)
@@ -203,6 +226,8 @@ def build_season(season: int) -> dict:
             "pa": r["pa"],
             "line": r["line"],
             "total": r["total"],
+            "h1_pf": r["h1_pf"],  # first-half points for / against
+            "h1_pa": r["h1_pa"],
             # Giveaways (offense / ball security)
             "int_thrown": r["int"],
             "fum_lost": r["fl"],
@@ -346,6 +371,7 @@ def write_model(current: int) -> None:
     current = min(current, max(seasons))
     report = model_report(seasons, current)
     report["kicks"] = kicks_report(seasons, current)
+    report["first_half"] = first_half_report(seasons, current)
     report["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     (DATA_DIR / "model.json").write_text(json.dumps(report, separators=(",", ":")) + "\n")
     live = report["signals"]["power"]["live"]
@@ -353,6 +379,9 @@ def write_model(current: int) -> None:
     if report["kicks"]:
         bt = report["kicks"]["signals"]["stall_bend"]["backtest"]
         print(f"kicks: {len(report['kicks']['board'])} team-games on the board; stall x bend backtest 2+ FGM {bt['rate']} (n={bt['n']})")
+    if report["first_half"]:
+        fh = report["first_half"]["backtest"]["all"]
+        print(f"first half: {len(report['first_half']['board'])} games on the board; backtest under rate {fh['rate']} (n={fh['n']}), Brier {fh['brier']} (with team profile {fh['brier_profile']}, base rate {fh['brier_base']})")
 
 
 if __name__ == "__main__":

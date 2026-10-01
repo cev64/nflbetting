@@ -41,6 +41,21 @@ Every signal is backtested on all seasons on disk (2021–2025) and tracked live
 shows those records beside the picks. **So far none of them beats the 52.4% needed at −110.** They're all near
 50%, because the spread already prices in turnover luck. Treat them as a screen, not as bets.
 
+**1H Under** (the default tab): one chart ranking the week's games by the chance they're **24 or fewer at
+halftime**, for first-half under 24.5 bets (`backend/firsthalf.py`). Each row shows that chance, the fair (no-vig)
+price, and dashed break-even lines for −150, −200 and −250; bet only when your book's under 24.5 price beats fair.
+- Halftime scores come from play-by-play (the running score at the end of the first half, so defensive and return
+  scores, PATs and two-point tries are included). Final scores from the same field match nflverse's schedule.
+- Projection = a + b × the full-game total; the chance of 24 or fewer comes from how far real halftime totals
+  landed from past projections (not an assumed Poisson/normal shape). Each season is predicted by a fit on earlier
+  seasons only.
+- Each team's first-half points scored and allowed were tested as a second input and **didn't improve the forecast**:
+  the market's total already reflects them. They're shown in each game's tooltip as context.
+- 2022–2025: 63% of games were 24 or fewer at half (720 of 1,139); the week's top 3 by the model, 71% (179 of 252).
+  The probabilities are well calibrated (the "Show how this was tested" panel).
+- **Not tested: profit.** nflverse has no first-half odds, so this can't show whether betting the under made money
+  at the prices actually offered. An odds feed (e.g. The Odds API's `totals_h1` / `alternate_totals_h1`) would allow that.
+
 **Kicks**: field-goal props, built on drive and red-zone data (`backend/kicks.py`). The idea is that FG props are
 priced mostly off the game total, so an offense that **moves the ball but stalls in the red zone**, facing a defense
 that **bends but doesn't break**, should kick more field goals than its total suggests.
@@ -154,6 +169,7 @@ one, drop in `web/logos/LA.png`.
 | `week`, `type`, `date`, `team`, `opp`, `home`, `pf`, `pa` | game info from the team's point of view (`type` is REG/WC/DIV/CON/SB) |
 | `line` | the team's spread from nflverse (negative = favored); it covered if `pf - pa + line > 0` |
 | `total` | the game's over/under from nflverse |
+| `h1_pf`, `h1_pa` | first-half points for and against (null if the game has no play-by-play) |
 | `int_thrown`, `fum_lost`, `fumbles` | giveaways, plus total fumbles (lost or not) |
 | `int_made`, `fum_rec`, `opp_fumbles` | takeaways, plus total opponent fumbles |
 | `drives`, `t40`, `rz`, `rz_td`, `td` | offense: drives, trips inside the 40 and the 20 (a snap from there), red-zone TDs, TD drives |
@@ -161,7 +177,8 @@ one, drop in `web/logos/LA.png`.
 | `opp_` + any of the ten above | the same, for the opponent's offense (what this team's defense allowed) |
 
 `model.json` holds the spread signals: backtest and live records per signal, graded flags for the
-current season, and `spots` for the upcoming week. Its `kicks` key holds the kicking backtest, calibration
+current season, and `spots` for the upcoming week. Its `first_half` key holds the under 24.5 backtest,
+calibration and weekly `board`; its `kicks` key holds the kicking backtest, calibration
 tiers, this season's graded flags, and the weekly `board`.
 
 `upcoming` lists the games in the week after the published data, with `spread_line` (positive = home favored),

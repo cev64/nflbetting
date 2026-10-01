@@ -19,9 +19,10 @@
       </div>
       <div class="tabs-scroll">
         <nav class="seg tabs" id="tabs" role="tablist" aria-label="Views">
-          <button role="tab" data-view="league" aria-selected="true">League</button>
+          <button role="tab" data-view="under" aria-selected="true">1H Under</button>
+          <button role="tab" data-view="league" aria-selected="false">League</button>
           <button role="tab" data-view="matchup" aria-selected="false">Matchup</button>
-          <button role="tab" data-view="ats" aria-selected="false">vs Spread</button>
+          <button role="tab" data-view="ats" aria-selected="false"><span class="tab-long">vs Spread</span><span class="tab-short">ATS</span></button>
           <button role="tab" data-view="spots" aria-selected="false">Spots</button>
           <button role="tab" data-view="kicks" aria-selected="false">Kicks</button>
         </nav>
@@ -71,7 +72,33 @@
       <div id="upcoming" class="upcoming list"></div>
     </section>
 
-    <section id="view-league" class="view">
+    <section id="view-under" class="view">
+      <div class="card">
+        <h3 class="card-title" id="under-title">First-half under 24.5</h3>
+        <p class="card-sub" id="under-lede"></p>
+        <div class="chart-legend"><span><i class="dotk"></i>Top 3 this week</span><span><i class="dotk g"></i>Other games</span>
+          <span class="muted">Dashed lines: break-even for under 24.5 at that price</span></div>
+        <div id="under-chart" class="chart"></div>
+      </div>
+      <div class="more">
+        <button class="more-btn" aria-expanded="false">Show how this was tested <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <div class="expand"><div><div class="content">
+          <div id="under-tiles" class="tiles"></div>
+          <p id="under-notes" class="lede"></p>
+          <div class="card">
+            <h3 class="card-title">Calibration</h3>
+            <p class="card-sub">When the model said X%, how often was it 24 or fewer at half? Every season was predicted by a fit on earlier seasons only.</p>
+            <div class="table-scroll"><table id="under-cal" class="stats cal"></table></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">This season's games</h3>
+            <div class="table-scroll"><table id="under-history" class="stats log"></table></div>
+          </div>
+        </div></div></div>
+      </div>
+    </section>
+
+    <section id="view-league" class="view" hidden>
       <div class="two-up">
         <div class="card">
           <h3 class="card-title">Who wins the turnover battle</h3>
