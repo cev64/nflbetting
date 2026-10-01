@@ -5,8 +5,8 @@ Turnover, spread and field-goal prop metrics for NFL betting, built on free [nfl
 - **Backend** (`backend/`): a Python script that pulls play-by-play and schedules with
   [`nflreadpy`](https://github.com/nflverse/nflreadpy) and writes per-team game logs to `web/data/*.json`.
 - **Website** (`web/`): a static site with no build step that reads those JSON files and shows the tables and comparisons.
-- **Automation** (`.github/workflows/update-data.yml`): refreshes the current season every Tuesday morning,
-  commits the new data, and (optionally) publishes the site to GitHub Pages.
+- **Automation** (`.github/workflows/update-data.yml`): refreshes the current season every morning at 8am ET
+  (for the latest lines), commits the new data, and (optionally) publishes the site to GitHub Pages.
 
 ## What it shows
 
@@ -69,7 +69,8 @@ that **bends but doesn't break**, should kick more field goals than its total su
 Spreads and totals come from nflverse's schedule data (`nflreadpy.load_schedules()`, from the `games` dataset
 maintained in [nflverse/nfldata](https://github.com/nflverse/nfldata)). Its docs don't say which sportsbook the
 lines come from, so treat them as a market consensus. For upcoming games, the line is whatever nflverse had
-when the Tuesday refresh ran, so check your own book's current number against the model's fair line.
+at the last refresh (every morning at 8am ET). The site is only as fresh as nflverse's file, which is not a live odds
+feed, so check your own book's current number against the model's fair line.
 
 **Upcoming games**: the next week's slate with the spread, the total, and each team's turnover diff per game.
 Click a game to open the matchup.
@@ -120,7 +121,10 @@ that only serves the repo root or `/docs`, and at the root you just get this REA
 
 1. **Settings → Pages → Build and deployment → Source**: choose **GitHub Actions**.
 2. **Actions → Update NFL data → Run workflow** (on the default branch) to fetch the data and deploy.
-   It also redeploys on any push that changes `web/`, and runs on its own every Tuesday.
+   It also redeploys on any push that changes `web/`, and runs on its own every morning at 8am ET
+   (plus Tuesday at 14:00 UTC, 10am EDT / 9am EST, in case Monday night's play-by-play was late). GitHub cron runs in UTC with no daylight
+   saving, so the workflow schedules both 12:00 and 13:00 UTC and skips whichever one isn't 8am in New York.
+   Scheduled runs can start several minutes late when GitHub is busy.
 3. Open `https://<user>.github.io/<repo>/`.
 
 Scheduled runs and Pages deployments only happen on the repo's default branch.
