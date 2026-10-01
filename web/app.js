@@ -9,13 +9,14 @@ const state = {
   span: 0,
   venue: "all",
   mode: "pg",
-  view: "league",
+  view: "under",
   a: null,
   b: null,
   sort: { key: "diff", dir: "desc" },
   atsSample: "season", // "season" | "all"
   atsSort: { key: "ats_pct", dir: "desc" },
   kickSort: {}, // per side ("off" / "def"): { key, dir }
+  kickAll: false, // weekly kicker chart: all kickers instead of the top 10
 };
 const cache = {};
 let data = null; // current season payload
@@ -288,6 +289,7 @@ const LEAGUE_COLS = [
 ];
 
 function renderLeague(L) {
+  renderLeagueCharts(L);
   const table = $("#league");
   const groups = [];
   for (const c of LEAGUE_COLS) {
@@ -391,7 +393,7 @@ function renderUpcoming(L) {
 // ---------- matchup ----------
 
 const CMP_ROWS = [
-  "take", "give", "diff", "int_made", "fum_rec", "int_thrown", "fum_lost", "kept_pct", "opp_rec_pct", "ats_pct", "ats_margin",
+  "take", "give", "diff", "ats_pct", "ats_margin",
   { sec: "Red zone & kicking" }, "off_t40", "off_rz_pct", "fgm", "def_t40", "def_rz_pct", "opp_fgm",
 ];
 
@@ -419,23 +421,23 @@ function renderMatchup(L) {
     return;
   }
 
-  // Side-by-side comparison
-  const rk = (key, t) => (L.ranks[key][t] ? `<small>${ordinal(L.ranks[key][t])}</small>` : "");
+  // Head-to-head: mirrored bars, longer = better league rank (or simply "more" where neither is better).
   const rec = (s) => `${s.w}-${s.l}${s.t ? `-${s.t}` : ""}`;
-  $("#m-compare").innerHTML =
-    `<div class="cmp-head"><div class="t">${logo(A.team)}<span>${A.team}</span><span class="name muted">${data.teams[A.team].nick || ""}</span></div><div class="label micro">${
-      state.mode === "pg" ? "per game · league rank" : "totals · league rank"
-    }</div><div class="t b"><span class="name muted">${data.teams[B.team].nick || ""}</span><span>${B.team}</span>${logo(B.team)}</div></div>` +
-    `<div class="cmp-row"><div class="v">${rec(A)}</div><div class="label">Record (${A.gp} / ${B.gp} games)</div><div class="v b">${rec(B)}</div></div>` +
-    `<div class="cmp-row"><div class="v">${A.ats.rec}</div><div class="label">Against the spread (W-L-P)</div><div class="v b">${B.ats.rec}</div></div>` +
-    (A.has_drives && B.has_drives ? CMP_ROWS : CMP_ROWS.slice(0, CMP_ROWS.findIndex((k) => k.sec))).map((key) => {
-      if (key.sec) return `<div class="cmp-sec micro">${key.sec}</div>`;
-      const va = value(A, key), vb = value(B, key);
-      const m = METRICS[key];
-      const aWin = va != null && vb != null && (va - vb) * m.better > 0;
-      const bWin = va != null && vb != null && (vb - va) * m.better > 0;
-      return `<div class="cmp-row"><div class="v ${aWin ? "win" : ""}">${fmt(va, key)}${rk(key, A.team)}</div><div class="label">${m.label}</div><div class="v b ${bWin ? "win" : ""}">${rk(key, B.team)}${fmt(vb, key)}</div></div>`;
-    }).join("");
+  const n = L.stats.length;
+  const len = (key, t) => (L.ranks[key][t] ? ((n - L.ranks[key][t] + 1) / n) * 100 : 0);
+  const side = (s, cls) => `<div class="t ${cls}">${cls === "b" ? "" : logo(s.team)}<div><div class="nm">${data.teams[s.team].nick || s.team}</div>
+    <div class="rec">${rec(s)} · ATS ${s.ats.rec}</div></div>${cls === "b" ? logo(s.team) : ""}</div>`;
+  const rows = (A.has_drives && B.has_drives ? CMP_ROWS : CMP_ROWS.slice(0, CMP_ROWS.findIndex((k) => k.sec))).map((key) => {
+    if (key.sec) return `<div class="bf-sec micro">${key.sec}</div>`;
+    const m = METRICS[key];
+    const va = value(A, key), vb = value(B, key);
+    const rank = (t) => (L.ranks[key][t] ? ordinal(L.ranks[key][t]) : "");
+    return `<div class="bf-row"><div class="val">${fmt(va, key)}<small>${rank(A.team)}</small></div>
+      <div class="bar a"><i style="width:${len(key, A.team)}%"></i></div><div class="lbl">${m.label}</div>
+      <div class="bar b"><i style="width:${len(key, B.team)}%"></i></div><div class="val b">${fmt(vb, key)}<small>${rank(B.team)}</small></div></div>`;
+  }).join("");
+  $("#m-compare").innerHTML = `<div class="bf-head">${side(A, "a")}<span class="micro">vs</span>${side(B, "b")}</div>
+    <div class="bf-key">${state.mode === "pg" ? "Per game" : "Totals"} · longer bar = better league rank (for field goals: more)</div>${rows}`;
 
   // Offense-vs-defense edges, always per game so the two sides are comparable.
   const per = (s, k) => (s.gp ? s[k] / s.gp : 0);
@@ -726,6 +728,21 @@ function renderATS() {
     const c = a < b ? -1 : a > b ? 1 : 0;
     return dir === "asc" ? c : -c;
   });
+  renderScatter($("#ats-team-chart"), rows.filter((r) => r.all.pct != null).map((r) => ({
+    team: r.team,
+    x: r.todiff,
+    y: r.all.pct,
+    tip: ttTitle(r.team) + ttGrid([
+      ["ATS", `${r.all.rec} (${pct(r.all.pct)})`],
+      ["Avg cover margin", signed(r.all.avg)],
+      ["TO diff / g", signed(r.todiff, 2)],
+      ["Won TO battle", cell(r.won).replace(/<[^>]+>/g, "")],
+      ["Lost TO battle", cell(r.lost).replace(/<[^>]+>/g, "")],
+    ]),
+  })), {
+    quad: false, xAvg: 0, yAvg: 0.5, xTitle: "Turnover diff per game →", yTitle: "Cover %", aria: "Turnover margin vs cover rate",
+    xSpan: 1, ySpan: 0.4, xFmt: (v) => signed(v, 1).replace("+0.0", "0").replace("-0.0", "0"),
+  });
   const table = $("#ats-table");
   table.tHead.innerHTML = `<tr><th class="sortable" data-key="team" ${sk === "team" ? `aria-sort="${dir}ending"` : ""}>Team</th>${cols
     .map((c) => `<th class="sortable ${c.sep ? "sep" : ""}" data-key="${c.key}" ${sk === c.key ? `aria-sort="${dir}ending"` : ""}>${c.label}</th>`)
@@ -771,30 +788,28 @@ function renderSpots() {
   const be = model.break_even;
   const [b0, b1] = model.backtest_seasons || ["?", "?"];
 
-  // Backtest + live record per signal
-  const rows = Object.entries(model.signals)
-    .map(([key, s]) => {
-      const beat = s.backtest.pct != null && s.backtest.pct >= be;
-      return `<tr><td class="sig"><b>${SIGNAL_NAMES[key]}</b><div class="muted">${s.rule}</div></td>
-        <td class="sep">${rec(s.backtest)}</td><td class="${beat ? "pos" : ""}">${pctTxt(s.backtest)}</td>
-        <td class="sep">${rec(s.live)}</td><td>${pctTxt(s.live)}</td></tr>`;
+  // Backtest + live record per signal, as tiles
+  $("#spots-tiles").innerHTML = Object.entries(model.signals)
+    .map(([key, sg]) => {
+      const beat = sg.backtest.pct != null && sg.backtest.pct >= be;
+      return `<div class="tile ${beat ? "hi" : ""}"><div class="tile-label">${SIGNAL_NAMES[key]}</div>
+        <div class="tile-value">${pct0(sg.backtest.pct)}<small>${rec(sg.backtest)}</small></div>
+        <div class="tile-sub">covered, ${b0}–${b1}</div>
+        <div class="tile-sub muted">${model.season}: ${rec(sg.live)}${sg.live.pct != null ? ` (${pct0(sg.live.pct)})` : ""}</div></div>`;
     })
     .join("");
-  $("#spots-backtest").innerHTML = `<thead><tr><th>Signal</th><th class="sep">${b0}–${b1} ATS</th><th>Win %</th>
-    <th class="sep">${model.season} so far</th><th>Win %</th></tr></thead><tbody>${rows}</tbody>`;
-  const best = Math.max(...Object.values(model.signals).map((s) => s.backtest.pct || 0));
+  const best = Math.max(...Object.values(model.signals).map((sg) => sg.backtest.pct || 0));
   $("#spots-verdict").innerHTML =
     best >= be
-      ? `At least one signal has cleared the ${(be * 100).toFixed(1)}% break-even at −110 in the backtest. Samples are still small, so size bets accordingly.`
-      : `<b>No signal has beaten the ${(be * 100).toFixed(1)}% break-even at −110</b> over ${b0}–${b1}; all of them are close to a coin flip.
-         The spread already prices in turnover luck. Use these flags to find games worth a closer look, not as automatic bets.`;
+      ? `At least one signal has cleared the <b>${(be * 100).toFixed(1)}%</b> break-even at −110 in the backtest. Samples are small, so size bets accordingly.`
+      : `<b>None of these beat the ${(be * 100).toFixed(1)}% break-even at −110</b> over ${b0}–${b1}. The spread already prices in
+         turnover luck, so use the flags to find games worth a closer look, not as automatic bets.`;
 
-  const isCurrent = state.season === model.season;
   const spots = model.spots || [];
-  $("#spots-title").textContent = spots.length
-    ? `Week ${spots[0].week} spots · ${model.season} data through ${weekLabel(data && isCurrent ? data.last_week : spots[0].week - 1)}`
-    : "No upcoming games";
+  $("#spots-title").textContent = spots.length ? `Week ${spots[0].week}: market spread vs model fair line` : "No upcoming games";
   box.innerHTML = spots.map(spotCard).join("") || `<p class="muted">No upcoming games in the schedule.</p>`;
+  if (spots.length) renderDumbbells($("#spots-chart"), spots);
+  else $("#spots-chart").innerHTML = `<p class="muted">No upcoming games in the schedule.</p>`;
 
   // 2026 flagged games already graded
   const hist = [...(model.live_history || [])].reverse();
@@ -905,15 +920,22 @@ function kickProfiles(L) {
 
 // Scatter of team logos: x = trips inside the 40 per game, y = red-zone TD %.
 // The bottom-right quadrant (above-average trips, below-average TD rate) is shaded.
-function renderScatter(box, pts, { xAvg, yAvg, xTitle, yTitle, quadLabel, aria }) {
+// quad: shade the bottom-right quadrant (and dim teams outside it); xFmt / yFmt: tick labels;
+// xSpan / ySpan: smallest axis range, so a tight cluster isn't blown up.
+function renderScatter(box, pts, { xAvg, yAvg, xTitle, yTitle, quadLabel, aria, quad = true, xSpan = 1, ySpan = 0.1,
+  xFmt = (v) => +v.toFixed(2), yFmt = (v) => `${Math.round(v * 100)}%` }) {
+  if (!pts.length) {
+    box.innerHTML = `<p class="muted">Not enough games for this chart with the current filters.</p>`;
+    return;
+  }
   const W = Math.max(box.clientWidth, 280), H = Math.round(Math.min(380, Math.max(280, W * 0.62)));
-  const m = { t: 14, r: 16, b: 40, l: 46 };
+  const m = { t: 14, r: 16, b: 40, l: 56 };
   const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
   const pad = (lo, hi, f) => [lo - (hi - lo) * f, hi + (hi - lo) * f];
   let [x0, x1] = pad(Math.min(...xs, xAvg), Math.max(...xs, xAvg), 0.08);
   let [y0, y1] = pad(Math.min(...ys, yAvg), Math.max(...ys, yAvg), 0.08);
-  if (x1 - x0 < 1) [x0, x1] = [xAvg - 0.5, xAvg + 0.5];
-  if (y1 - y0 < 0.1) [y0, y1] = [yAvg - 0.05, yAvg + 0.05];
+  if (x1 - x0 < xSpan) [x0, x1] = [(x0 + x1) / 2 - xSpan / 2, (x0 + x1) / 2 + xSpan / 2];
+  if (y1 - y0 < ySpan) [y0, y1] = [(y0 + y1) / 2 - ySpan / 2, (y0 + y1) / 2 + ySpan / 2];
   const x = (v) => m.l + ((v - x0) / (x1 - x0)) * (W - m.l - m.r);
   const y = (v) => m.t + ((y1 - v) / (y1 - y0)) * (H - m.t - m.b);
   const ticks = (lo, hi, n) => {
@@ -925,21 +947,23 @@ function renderScatter(box, pts, { xAvg, yAvg, xTitle, yTitle, quadLabel, aria }
   };
   const S = 22;
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${aria}">`;
-  svg += `<rect class="quad" x="${x(xAvg)}" y="${y(yAvg)}" width="${W - m.r - x(xAvg)}" height="${H - m.b - y(yAvg)}" rx="6"/>`;
-  svg += `<text class="quad-label" x="${W - m.r - 8}" y="${H - m.b - 10}" text-anchor="end">${quadLabel}</text>`;
+  if (quad) {
+    svg += `<rect class="quad" x="${x(xAvg)}" y="${y(yAvg)}" width="${W - m.r - x(xAvg)}" height="${H - m.b - y(yAvg)}" rx="6"/>`;
+    svg += `<text class="quad-label" x="${W - m.r - 8}" y="${H - m.b - 10}" text-anchor="end">${quadLabel}</text>`;
+  }
   svg += `<g class="grid">`;
   for (const v of ticks(x0, x1, 5)) svg += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t}" y2="${H - m.b}"/>`;
   for (const v of ticks(y0, y1, 5)) svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>`;
   svg += `</g><g class="axis">`;
-  for (const v of ticks(x0, x1, 5)) svg += `<text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${+v.toFixed(2)}</text>`;
-  for (const v of ticks(y0, y1, 5)) svg += `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${Math.round(v * 100)}%</text>`;
+  for (const v of ticks(x0, x1, 5)) svg += `<text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${xFmt(v)}</text>`;
+  for (const v of ticks(y0, y1, 5)) svg += `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${yFmt(v)}</text>`;
   svg += `<text class="axis-title" x="${(m.l + W - m.r) / 2}" y="${H - 6}" text-anchor="middle">${xTitle}</text>`;
   svg += `<text class="axis-title" transform="translate(12 ${(m.t + H - m.b) / 2}) rotate(-90)" text-anchor="middle">${yTitle}</text>`;
   svg += `</g><line class="ref dash" x1="${x(xAvg)}" x2="${x(xAvg)}" y1="${m.t}" y2="${H - m.b}"/>`;
   svg += `<line class="ref dash" x1="${m.l}" x2="${W - m.r}" y1="${y(yAvg)}" y2="${y(yAvg)}"/>`;
   pts.forEach((p, i) => {
     const remote = data.teams[p.team]?.logo || "";
-    svg += `<g class="dot ${p.target ? "" : "dim"}" data-i="${i}"><circle cx="${x(p.x)}" cy="${y(p.y)}" r="${S / 2 + 3}" fill="transparent"/>`;
+    svg += `<g class="dot ${quad && !p.target ? "dim" : ""}" data-i="${i}"><circle cx="${x(p.x)}" cy="${y(p.y)}" r="${S / 2 + 3}" fill="transparent"/>`;
     svg += `<image href="logos/${p.team}.png" x="${x(p.x) - S / 2}" y="${y(p.y) - S / 2}" width="${S}" height="${S}" onerror="this.onerror=null;this.setAttribute('href','${remote}')"/></g>`;
   });
   svg += `</svg>`;
@@ -994,6 +1018,8 @@ function renderKickTable(sel, K, side) {
     .join("");
 }
 
+const KICK_TOP = 10; // kickers shown in the weekly chart before "Show all"
+
 function renderKicks(L) {
   const K = kickProfiles(L);
   const kx = model?.kicks;
@@ -1011,13 +1037,10 @@ function renderKicks(L) {
       tile(`Every kicker, ${b0}–${b1}`, base, sig.all.live) +
       tile("Stall offense × bend defense", sb, sig.stall_bend.live) +
       tile(`Projects ${kx.params.flag_fgm}+ FGs made`, p2, sig.proj2.live, true);
-    const lift = (r) => (r.rate - base.rate) * 100;
-    $("#kicks-verdict").innerHTML = `Over ${b0}–${b1}, a kicker made 2+ field goals in <b>${pct0(base.rate)}</b> of games.
-      The plain <b>stall × bend</b> matchup didn't add anything (${pct0(sb.rate)}, ${signed(lift(sb))} pts, n=${sb.n}):
-      a red-zone profile on its own is mostly noise. Projecting trips × field-goal tries per trip did better: games it put at
-      ${kx.params.flag_fgm}+ FGs went over 1.5 <b>${pct0(p2.rate)}</b> of the time (n=${p2.n}), against ${pct0(p2.total_only)} for a
-      price built only on the team total. That only pays if your book's price is short of it: over 1.5 needs
-      ${pct1(breakEven(-120))} at −120 and ${pct1(breakEven(-140))} at −140. Small samples; treat it as a screen.`;
+    $("#kicks-verdict").innerHTML = `<b>The short version:</b> "drives but stalls" on its own didn't produce extra field goals.
+      Projecting trips × field-goal tries per trip did: kickers it put at ${kx.params.flag_fgm}+ made 2+ field goals
+      <b>${pct0(p2.rate)}</b> of the time. Over 1.5 needs ${pct1(breakEven(-120))} at −120 and ${pct1(breakEven(-140))} at −140,
+      so it only pays when your book's price is short.`;
     const live = Object.fromEntries((kx.calibration.live || []).map((r) => [r.lo, r]));
     $("#kicks-cal").innerHTML = `<thead><tr><th>Raw projection</th><th class="sep">${b0}–${b1} games</th><th>Model P(2+)</th><th>Total-only P(2+)</th><th>Actual 2+</th><th>FGM/g</th>
       <th class="sep">${kx.season} games</th><th>Actual 2+</th></tr></thead><tbody>${kx.calibration.backtest
@@ -1037,7 +1060,29 @@ function renderKicks(L) {
   const board = kx && state.season === kx.season ? kx.board || [] : [];
   $("#kicks-board-wrap").hidden = !board.length;
   if (board.length) {
-    $("#kicks-title").textContent = `Week ${board[0].week} kicking board`;
+    $("#kicks-title").textContent = `Week ${board[0].week} kickers`;
+    const flagAt = kx.params.flag_fgm;
+    const shown = state.kickAll ? board : board.slice(0, KICK_TOP);
+    renderRankDots($("#kicks-chart"), shown.map((r) => ({
+      team: r.team,
+      opp: r.opp,
+      sub: `${r.home ? "vs" : "@"} ${r.opp}`,
+      value: r.fgm_raw,
+      flagged: r.signals.length > 0,
+      valText: `${r.fgm_raw.toFixed(1)} · ${pct0(r.p2)}`,
+      tip: ttTitle(r.team, ` ${r.home ? "vs" : "@"} ${r.opp}`) + ttGrid([
+        ["Projected FGs made", r.fgm_raw.toFixed(2)],
+        ["Chance of 2+", pct0(r.p2)],
+        ["Fair odds, over 1.5", odds(r.p2_odds)],
+        ["Implied team points", r.implied ?? "–"],
+        ["Kicker points", `${r.kpts.toFixed(1)} (${pct0(r.p_kpts)} for ${kx.params.kpts_line + 0.5}+)`],
+        ["Profile", [r.stall && "stall offense", r.bend && `${r.opp} bends`].filter(Boolean).join(", ") || "–"],
+      ]),
+    })), { ref: { value: flagAt, label: `flag at ${flagAt.toFixed(1)}` }, min: 1, max: 2.2, step: 0.25, fmtTick: (v) => +v.toFixed(2),
+      aria: "Projected field goals made per kicker" });
+    const btn = $("#kicks-all");
+    btn.hidden = board.length <= KICK_TOP;
+    btn.textContent = state.kickAll ? `Show top ${KICK_TOP}` : `Show all ${board.length} kickers`;
     const table = $("#kicks-board");
     table.tHead.innerHTML = `<tr><th>Kicker</th><th title="Team's implied points from the total and spread">Implied</th>
       <th class="sep" title="Projected trips inside the 40">Trips 40</th><th title="Projected field-goal tries per trip">FGA/trip</th>
@@ -1098,10 +1143,265 @@ function renderKicks(L) {
     : `<tbody><tr><td class="muted">No ${kx?.season ?? ""} kickers have been flagged and graded yet.</td></tr></tbody>`;
 }
 
+// ---------- simple charts: league scatters, ranked bars, dumbbells ----------
+
+const ttGrid = (pairs) => `<div class="tt-grid">${pairs.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join("")}</div>`;
+const ttTitle = (team, extra = "") => `<div class="tt-title">${logo(team)}${data.teams[team]?.name || team}${extra}</div>`;
+
+function renderLeagueCharts(L) {
+  const teams = L.stats.filter((s) => s.gp);
+  const gp = teams.reduce((a, s) => a + s.gp, 0) || 1;
+  const avgTake = teams.reduce((a, s) => a + s.take, 0) / gp;
+  renderScatter($("#league-to-chart"), teams.map((s) => ({
+    team: s.team,
+    x: s.take / s.gp,
+    y: s.give / s.gp,
+    target: s.take / s.gp >= avgTake && s.give / s.gp < avgTake,
+    tip: ttTitle(s.team) + ttGrid([
+      ["Takeaways / g", (s.take / s.gp).toFixed(2)],
+      ["Giveaways / g", (s.give / s.gp).toFixed(2)],
+      ["TO diff / g", signed(s.diff / s.gp, 2)],
+      ["ATS", s.ats.rec],
+    ]),
+  })), {
+    xAvg: avgTake, yAvg: avgTake, xTitle: "Takeaways per game →", yTitle: "Giveaways per game",
+    quadLabel: "Takes it, protects it", aria: "Takeaways vs giveaways per game", ySpan: 1,
+    xFmt: (v) => v.toFixed(1), yFmt: (v) => v.toFixed(1),
+  });
+
+  // Fumble luck: share of opponents' fumbles recovered vs share of own fumbles lost.
+  const MIN_FUM = 2;
+  const fum = teams.filter((s) => s.fumbles >= MIN_FUM && s.opp_fumbles >= MIN_FUM);
+  renderScatter($("#league-fum-chart"), fum.map((s) => ({
+    team: s.team,
+    x: s.opp_rec_pct,
+    y: 1 - s.kept_pct,
+    target: s.opp_rec_pct >= 0.5 && 1 - s.kept_pct < 0.5,
+    tip: ttTitle(s.team) + ttGrid([
+      ["Opp fumbles recovered", `${s.fum_rec} of ${s.opp_fumbles} (${pct0(s.opp_rec_pct)})`],
+      ["Own fumbles lost", `${s.fum_lost} of ${s.fumbles} (${pct0(1 - s.kept_pct)})`],
+    ]),
+  })), {
+    xAvg: 0.5, yAvg: 0.5, xTitle: "Opponent fumbles recovered →", yTitle: "Own fumbles lost",
+    quadLabel: "Lucky so far", aria: "Fumble recovery luck", xSpan: 0.4, ySpan: 0.4,
+    xFmt: (v) => `${Math.round(v * 100)}%`,
+  });
+}
+
+// One row per team (logo + label), sorted as given, as a dot plot on a [min, max]
+// axis: a thin stem from the axis start to a dot at the value. Dots don't need a
+// zero baseline, so close values stay readable.
+// rows: { team, opp, sub, value, flagged, valText, tip }; ref: { value, label } draws a dashed line.
+function renderRankDots(box, rows, { ref, min, max, step, fmtTick = (v) => v.toFixed(1), aria }) {
+  const W = Math.max(box.clientWidth, 280), RH = 28;
+  const m = { t: 22, r: 92, b: ref ? 22 : 6, l: 112 };
+  const H = m.t + rows.length * RH + m.b;
+  const hi = Math.max(max, ...rows.map((r) => r.value)), lo = Math.min(min, ...rows.map((r) => r.value));
+  const x = (v) => m.l + ((v - lo) / (hi - lo)) * (W - m.l - m.r);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${aria}"><g class="grid">`;
+  const ticks = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) ticks.push(+v.toFixed(4));
+  for (const v of ticks) svg += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t - 4}" y2="${H - m.b}"/>`;
+  svg += `</g><g class="axis">`;
+  for (const v of ticks) svg += `<text x="${x(v)}" y="${m.t - 9}" text-anchor="middle">${fmtTick(v)}</text>`;
+  svg += `</g>`;
+  if (ref) {
+    svg += `<line class="ref dash" x1="${x(ref.value)}" x2="${x(ref.value)}" y1="${m.t - 4}" y2="${H - m.b + 4}"/>`;
+    svg += `<text class="rowsub" x="${x(ref.value)}" y="${H - 4}" text-anchor="middle">${ref.label}</text>`;
+  }
+  rows.forEach((r, i) => {
+    const y = m.t + i * RH, cy = y + RH / 2;
+    const remote = data.teams[r.team]?.logo || "";
+    svg += `<g class="rrow" data-i="${i}"><rect class="row-hit" x="0" y="${y}" width="${W}" height="${RH}" rx="6"/>`;
+    svg += `<image href="logos/${r.team}.png" x="4" y="${cy - 9}" width="18" height="18" onerror="this.onerror=null;this.setAttribute('href','${remote}')"/>`;
+    svg += `<text class="rowlabel" x="28" y="${cy + 4}">${r.team}</text><text class="rowsub" x="62" y="${cy + 4}">${r.sub || ""}</text>`;
+    svg += `<line class="db-line ${r.flagged ? "flagged" : ""}" x1="${x(lo)}" x2="${x(r.value)}" y1="${cy}" y2="${cy}"/>`;
+    svg += `<circle class="db-model ${r.flagged ? "flagged" : ""}" cx="${x(r.value)}" cy="${cy}" r="6"/>`;
+    svg += `<text class="val ${r.flagged ? "flagged" : ""}" x="${W - m.r + 12}" y="${cy + 4}">${r.valText}</text></g>`;
+  });
+  box.innerHTML = svg + `</svg>`;
+  box.querySelectorAll(".rrow").forEach((g) => {
+    const r = rows[Number(g.dataset.i)];
+    g.addEventListener("mousemove", (ev) => showTip(r.tip, ev));
+    g.addEventListener("mouseleave", hideTip);
+    g.addEventListener("click", () => openMatchup(r.team, r.opp));
+  });
+}
+
+// One row per game: the market spread (hollow ring) and the model's fair line (dot),
+// on a home-margin axis (right = home favored).
+function renderDumbbells(box, spots) {
+  const W = Math.max(box.clientWidth, 280), RH = 34, narrow = W < 520;
+  const m = { t: 26, r: narrow ? 8 : 128, b: 8, l: 92 };
+  const H = m.t + spots.length * RH + m.b;
+  const vals = spots.flatMap((s) => [s.spread_line, s.fair_spread_line]).filter((v) => v != null);
+  const span = Math.max(7, Math.ceil(Math.max(...vals.map(Math.abs), 0) + 1));
+  const x = (v) => m.l + ((v + span) / (2 * span)) * (W - m.l - m.r);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Market spread vs model fair line">`;
+  svg += `<g class="axis"><text x="${m.l}" y="12">← away${narrow ? "" : " favored"}</text><text x="${W - m.r}" y="12" text-anchor="end">home${narrow ? "" : " favored"} →</text>`;
+  svg += `<text x="${x(0)}" y="12" text-anchor="middle">even</text></g>`;
+  svg += `<g class="grid">`;
+  for (let v = -Math.floor(span / 7) * 7; v <= span; v += 7) svg += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t - 6}" y2="${H - m.b}"/>`;
+  svg += `</g><line class="ref" x1="${x(0)}" x2="${x(0)}" y1="${m.t - 6}" y2="${H - m.b}"/>`;
+  spots.forEach((s, i) => {
+    const cy = m.t + i * RH + RH / 2;
+    const flagged = !!s.lean;
+    svg += `<g class="rrow" data-i="${i}"><rect class="row-hit" x="0" y="${cy - RH / 2}" width="${W}" height="${RH}" rx="6"/>`;
+    svg += `<text class="rowlabel" x="4" y="${cy + 4}">${s.away}</text><text class="rowsub" x="40" y="${cy + 4}">@</text><text class="rowlabel" x="54" y="${cy + 4}">${s.home}</text>`;
+    if (s.spread_line != null) {
+      const a = x(s.spread_line), b = x(s.fair_spread_line);
+      svg += `<line class="db-line ${flagged ? "flagged" : ""}" x1="${a}" x2="${b}" y1="${cy}" y2="${cy}"/>`;
+      svg += `<circle class="db-model ${flagged ? "flagged" : ""}" cx="${b}" cy="${cy}" r="5.5"/>`;
+      svg += `<circle class="db-market" cx="${a}" cy="${cy}" r="5.5"/>`;
+    } else svg += `<text class="rowsub" x="${x(0)}" y="${cy + 4}" text-anchor="middle">no line yet</text>`;
+    if (!narrow && flagged) {
+      const side = s.lean === s.home ? -s.spread_line : s.spread_line;
+      svg += `<text class="lean" x="${W - m.r + 12}" y="${cy + 4}">${s.strength === 2 ? "★ " : ""}${teamLine(s.lean, side)}</text>`;
+    }
+    svg += `</g>`;
+  });
+  box.innerHTML = svg + `</svg>`;
+  box.querySelectorAll(".rrow").forEach((g) => {
+    const s = spots[Number(g.dataset.i)];
+    const sideLine = (t) => (t === s.home ? -s.spread_line : s.spread_line);
+    const sig = Object.entries(s.signals).filter(([k]) => k !== "strong").map(([k, t]) => [SIGNAL_NAMES[k], teamLine(t, sideLine(t))]);
+    const tipHtml = `<div class="tt-title">${s.away} @ ${s.home} · ${gameWhen(s)}</div>` + ttGrid([
+      ["Market", favLine(s.home, s.away, s.spread_line)],
+      ["Model fair line", favLine(s.home, s.away, s.fair_spread_line)],
+      ["Edge", s.edge == null ? "–" : `${Math.abs(s.edge).toFixed(1)} pts`],
+      ...sig,
+      ["Verdict", s.strength === 2 ? `Both signals: ${s.lean}` : s.lean ? `Lean ${s.lean}` : sig.length ? "Signals disagree" : "No spot"],
+    ]);
+    g.addEventListener("mousemove", (ev) => showTip(tipHtml, ev));
+    g.addEventListener("mouseleave", hideTip);
+    g.addEventListener("click", () => openMatchup(s.away, s.home));
+  });
+}
+
+// ---------- 1H Under: chance each game is 24 or fewer at halftime ----------
+
+const UNDER_PRICES = [-150, -200, -250]; // break-even reference lines
+const TOP_N = 3;
+
+function renderUnder() {
+  const fh = model?.first_half;
+  const box = $("#under-chart");
+  if (!fh) {
+    $("#under-lede").textContent = "No first-half model yet. Run backend/fetch_data.py.";
+    box.innerHTML = "";
+    return;
+  }
+  const board = fh.board || [];
+  const bt = fh.backtest, lv = fh.live;
+  const seasons = fh.backtest_seasons;
+  const span = seasons.length ? `${seasons[0]}–${seasons[seasons.length - 1]}` : "";
+  $("#under-title").textContent = board.length ? `Week ${board[0].week}: chance of 24 or fewer at half` : "First-half under 24.5";
+  $("#under-lede").innerHTML = `Ranked best to worst. Bet a game only when your book's under 24.5 price is better than the fair price on the right.
+    The week's top 3 went under <b>${pct0(bt.top3.rate)}</b> of the time in ${span} (${bt.top3.under} of ${bt.top3.n}); every game, ${pct0(bt.all.rate)}.`;
+  if (!board.length) box.innerHTML = `<p class="muted">No upcoming games in the schedule.</p>`;
+  else renderUnderChart(box, board);
+
+  // How this was tested
+  const tile = (label, r, sub, hi) => `<div class="tile ${hi ? "hi" : ""}"><div class="tile-label">${label}</div>
+    <div class="tile-value">${pct0(r.rate)}<small>${r.under} of ${r.n}</small></div><div class="tile-sub">${sub}</div></div>`;
+  $("#under-tiles").innerHTML =
+    tile(`Every game, ${span}`, bt.all, `24 or fewer at half · model said ${pct0(bt.all.avg_p)}`) +
+    tile("Top 3 each week", bt.top3, `model said ${pct0(bt.top3.avg_p)} · ${fh.season}: ${lv.top3.n ? `${lv.top3.under} of ${lv.top3.n}` : "none yet"}`, true) +
+    tile("Model 70%+", bt.p70, `model said ${pct0(bt.p70.avg_p)} · ${fh.season}: ${lv.p70.n ? `${lv.p70.under} of ${lv.p70.n}` : "none yet"}`);
+  const be = (o) => pct1(breakEven(o));
+  $("#under-notes").innerHTML = `<b>How it works:</b> the projection is ${fh.coef ? `${fh.coef.intercept} + ${fh.coef.per_total_point} × the full-game total` : "fitted on past seasons"},
+    and the chance of 24 or fewer comes from how far real halftime scores landed from that projection in past seasons.
+    Each team's first-half scoring (points scored and allowed) was tested as a second input but didn't improve the forecast
+    (Brier ${bt.all.brier_profile} with it vs ${bt.all.brier} without; lower is better, ${bt.all.brier_base} for a flat base rate):
+    the market's total already reflects it. <b>What can't be tested:</b> nflverse has no first-half odds, so this measures how
+    accurate the probabilities are, not whether betting them made money. Break-even is ${be(-150)} at −150, ${be(-200)} at −200, ${be(-250)} at −250.`;
+  const live = Object.fromEntries((fh.calibration.live || []).map((r) => [r.lo, r]));
+  $("#under-cal").innerHTML = `<thead><tr><th>Model said</th><th class="sep">${span} games</th><th>Avg model</th><th>Actually under</th>
+    <th class="sep">${fh.season} games</th><th>Actually under</th></tr></thead><tbody>${fh.calibration.backtest
+      .map((r) => {
+        const l = live[r.lo] || {};
+        const name = r.lo === 0 ? `Under ${pct0(r.hi)}` : r.hi >= 1 ? `${pct0(r.lo)}+` : `${pct0(r.lo)}–${pct0(r.hi)}`;
+        return `<tr><td>${name}</td><td class="sep">${r.n}</td><td>${pct1(r.avg_p)}</td><td><b>${r.n ? `${pct1(r.rate)}` : "–"}</b> <span class="muted">${r.under}/${r.n}</span></td>
+          <td class="sep">${l.n || 0}</td><td>${l.n ? `${pct0(l.rate)} <span class="muted">${l.under}/${l.n}</span>` : "–"}</td></tr>`;
+      })
+      .join("")}</tbody>`;
+  const hist = fh.live_history || [];
+  $("#under-history").innerHTML = hist.length
+    ? `<thead><tr><th>Wk</th><th class="l">Game</th><th>Total</th><th>Model</th><th>Halftime pts</th><th>Under 24.5</th></tr></thead><tbody>${hist
+        .map((h) => {
+          const hit = h.h1 <= fh.line;
+          return `<tr><td>${h.week}</td><td class="l">${h.away} @ ${h.home}</td><td>${h.total}</td><td>${pct0(h.p)}</td><td>${h.h1}</td>
+            <td><span class="chip ${hit ? "chip-win" : "chip-loss"}">${hit ? "✓ under" : "✗ over"}</span></td></tr>`;
+        })
+        .join("")}</tbody>`
+    : `<tbody><tr><td class="muted">No ${fh.season} games graded yet.</td></tr></tbody>`;
+}
+
+// One row per game: a dot at the chance of 24 or fewer at half, with dashed
+// break-even lines for common under 24.5 prices. Right label: chance and fair price.
+function renderUnderChart(box, board) {
+  const W = Math.max(box.clientWidth, 280), RH = 40, narrow = W < 560;
+  const m = { t: narrow ? 38 : 26, r: narrow ? 66 : 132, b: 8, l: narrow ? 128 : 168 };
+  const H = m.t + board.length * RH + m.b;
+  const lo = narrow ? 0.4 : 0.3, hi = narrow ? 0.8 : 0.85;
+  const x = (v) => m.l + ((Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo)) * (W - m.l - m.r);
+  const top = new Set(board.filter((g) => g.p != null).slice(0, TOP_N).map((g) => g.game_id));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Chance each game is 24 or fewer at halftime"><g class="grid">`;
+  for (let v = lo; v <= hi + 1e-9; v += 0.1) svg += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t - 4}" y2="${H - m.b}"/>`;
+  svg += `</g>`;
+  UNDER_PRICES.forEach((o, k) => {
+    const v = breakEven(o);
+    // On narrow screens the lines sit close together, so stagger short labels.
+    const ty = narrow ? m.t - 10 - (k % 2) * 13 : m.t - 12;
+    svg += `<line class="ref dash" x1="${x(v)}" x2="${x(v)}" y1="${ty + 3}" y2="${H - m.b}"/>`;
+    svg += `<text class="rowsub" x="${x(v)}" y="${ty}" text-anchor="middle">−${-o}${narrow ? "" : ` · ${Math.round(v * 100)}%`}</text>`;
+  });
+  board.forEach((g, i) => {
+    const cy = m.t + i * RH + RH / 2;
+    const isTop = top.has(g.game_id);
+    const logoAt = (t, lx) => `<image href="logos/${t}.png" x="${lx}" y="${cy - 17}" width="16" height="16" onerror="this.onerror=null;this.setAttribute('href','${data.teams[t]?.logo || ""}')"/>`;
+    svg += `<g class="rrow" data-i="${i}"><rect class="row-hit" x="0" y="${cy - RH / 2}" width="${W}" height="${RH}" rx="6"/>`;
+    svg += logoAt(g.away, 4) + `<text class="rowlabel" x="24" y="${cy - 4}">${g.away}</text><text class="rowsub" x="57" y="${cy - 4}">@</text>`;
+    svg += logoAt(g.home, 72) + `<text class="rowlabel" x="92" y="${cy - 4}">${g.home}</text>`;
+    const final = g.home_score != null;
+    const sub = final ? `Final ${g.away_score}-${g.home_score}` : `${gameWhen(g).split(",")[0]}${g.total_line != null ? ` · total ${g.total_line}` : ""}`;
+    svg += `<text class="rowsub" x="4" y="${cy + 13}">${sub}</text>`;
+    if (g.p == null) {
+      svg += `<text class="rowsub" x="${m.l + 6}" y="${cy + 4}">no line yet</text></g>`;
+      return;
+    }
+    svg += `<line class="db-line ${isTop ? "flagged" : ""}" x1="${x(lo)}" x2="${x(g.p)}" y1="${cy}" y2="${cy}"/>`;
+    svg += `<circle class="db-model ${isTop ? "flagged" : ""}" cx="${x(g.p)}" cy="${cy}" r="7"/>`;
+    svg += `<text class="val ${isTop ? "flagged" : ""}" x="${W - m.r + 12}" y="${cy - 1}" style="font-size:15px">${pct0(g.p)}</text>`;
+    svg += `<text class="rowsub" x="${W - m.r + 12}" y="${cy + 13}">fair ${odds(g.fair_odds)}</text></g>`;
+  });
+  box.innerHTML = svg + `</svg>`;
+  box.querySelectorAll(".rrow").forEach((el) => {
+    const g = board[Number(el.dataset.i)];
+    const team = (t) => {
+      const s = g.teams[t];
+      if (!s || !s.n) return [`${t} 1H pts for / against`, "no games yet"];
+      return [`${t} 1H pts for / against`, `${s.scored.toFixed(1)} / ${s.allowed.toFixed(1)}, ${s.under} of ${s.n} under`];
+    };
+    const html = `<div class="tt-title">${g.away} @ ${g.home} · ${gameWhen(g)}${g.time ? ` ${g.time} ET` : ""}</div>` + ttGrid([
+      ["Full-game total", g.total_line ?? "no line yet"],
+      ["Spread", lineText(g).split(" · ")[0]],
+      ["Projected 1H points", g.proj == null ? "–" : `${g.proj} (80%: ${Math.round(g.lo)}–${Math.round(g.hi)})`],
+      ["Chance of 24 or fewer", g.p == null ? "–" : pct0(g.p)],
+      ["Fair price, under 24.5", odds(g.fair_odds)],
+      team(g.away),
+      team(g.home),
+    ]);
+    el.addEventListener("mousemove", (ev) => showTip(html, ev));
+    el.addEventListener("mouseleave", hideTip);
+    el.addEventListener("click", () => openMatchup(g.away, g.home));
+  });
+}
+
 // ---------- routing & wiring ----------
 
-const VIEWS = ["league", "matchup", "ats", "spots", "kicks"];
-const VIEW_NAMES = { league: "League", matchup: "Matchup", ats: "vs Spread", spots: "Spots", kicks: "Kicks" };
+const VIEWS = ["under", "league", "matchup", "ats", "spots", "kicks"];
+const VIEW_NAMES = { under: "1H Under", league: "League", matchup: "Matchup", ats: "vs Spread", spots: "Spots", kicks: "Kicks" };
 
 function writeHash() {
   const p = new URLSearchParams();
@@ -1129,6 +1429,8 @@ function render() {
   const L = leagueStats();
   document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.view === state.view));
   for (const v of VIEWS) $(`#view-${v}`).hidden = state.view !== v;
+  document.body.dataset.view = state.view;
+  if (switched) chromeSetup?.();
   document.querySelectorAll("#mode-seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === state.mode));
   const upd = new Date(data.updated);
   $("#updated").textContent = `${data.season} season · through ${weekLabel(data.last_week)} · updated ${upd.toLocaleString(undefined, {
@@ -1140,6 +1442,7 @@ function render() {
   else if (state.view === "matchup") renderMatchup(L);
   else if (state.view === "ats") renderATS();
   else if (state.view === "spots") renderSpots();
+  else if (state.view === "under") renderUnder();
   else renderKicks(L);
   if (switched) {
     replay(sec, "on");
@@ -1167,6 +1470,8 @@ function openMatchup(a, b) {
 // that pins into a floating glass card. Pinning is detected with an
 // IntersectionObserver on a 0-height sentinel, and the toolbar's footprint is
 // frozen at its open height so pinning never moves the page.
+let chromeSetup = null; // re-measures the sticky toolbar (it's hidden on some views)
+
 function setupChrome() {
   const header = $("#site-header"), wrap = $("#tb-wrap"), bar = $("#toolbar");
   const wide = matchMedia("(min-width: 641px)");
@@ -1190,6 +1495,7 @@ function setupChrome() {
     );
     io.observe($("#tb-sentinel"));
   };
+  chromeSetup = setup;
   setup();
   let t;
   window.addEventListener("resize", () => {
@@ -1197,7 +1503,7 @@ function setupChrome() {
     t = setTimeout(() => {
       setup();
       glideAll();
-      if (state.view !== "league") render();
+      render();
     }, 150);
   });
   document.fonts?.ready.then(() => {
@@ -1267,6 +1573,17 @@ function wire() {
     e.preventDefault();
     openMatchup(a.dataset.team, a.dataset.opp || null);
   });
+  // "Show …" disclosures expand in place.
+  document.querySelector("main").addEventListener("click", (e) => {
+    const btn = e.target.closest(".more-btn");
+    if (!btn) return;
+    const box = btn.parentElement;
+    const open = !box.classList.contains("open");
+    box.classList.toggle("open", open);
+    btn.setAttribute("aria-expanded", open);
+    btn.firstChild.textContent = open ? btn.firstChild.textContent.replace(/^Show/, "Hide") : btn.firstChild.textContent.replace(/^Hide/, "Show");
+  });
+  $("#kicks-all").addEventListener("click", () => { state.kickAll = !state.kickAll; render(); });
   $("#upcoming").addEventListener("click", (e) => {
     const g = e.target.closest(".game");
     if (g) openMatchup(g.dataset.a, g.dataset.b);
