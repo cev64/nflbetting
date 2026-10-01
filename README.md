@@ -133,7 +133,9 @@ Scheduled runs and Pages deployments only happen on the repo's default branch.
 
 The site follows a "fluid glass" style: a bright white surface with navy ink, Inter for text and Barlow Condensed
 for headings, and glass only on floating layers (the sticky header, the filter bar once it pins, and tooltips).
-Tabs and toggles use a pill that glides to the selection. When a table re-sorts or the filters change, rows slide to
+Each tab leads with one or two simple charts (team-logo scatters, a market-vs-model dumbbell for spreads, a dot plot
+of projected field goals per kicker, mirrored bars for matchups); the full tables, game logs and method notes sit
+behind "Show …" toggles. Tabs and toggles use a pill that glides to the selection. When a table re-sorts or the filters change, rows slide to
 their new place, washing green if they moved up and red if they moved down. All motion is off under
 `prefers-reduced-motion`.
 
