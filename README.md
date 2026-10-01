@@ -1,6 +1,6 @@
 # NFL Turnover Tracker
 
-Turnover metrics for NFL betting, built on free [nflverse](https://github.com/nflverse) data.
+Turnover, spread and field-goal prop metrics for NFL betting, built on free [nflverse](https://github.com/nflverse) data.
 
 - **Backend** (`backend/`): a Python script that pulls play-by-play and schedules with
   [`nflreadpy`](https://github.com/nflverse/nflreadpy) and writes per-team game logs to `web/data/*.json`.
@@ -40,6 +40,29 @@ ATS records and each game's line and cover margin also appear in the league tabl
 Every signal is backtested on all seasons on disk (2021–2025) and tracked live in the current season. The site
 shows those records beside the picks. **So far none of them beats the 52.4% needed at −110.** They're all near
 50%, because the spread already prices in turnover luck. Treat them as a screen, not as bets.
+
+**Kicks**: field-goal props, built on drive and red-zone data (`backend/kicks.py`). The idea is that FG props are
+priced mostly off the game total, so an offense that **moves the ball but stalls in the red zone**, facing a defense
+that **bends but doesn't break**, should kick more field goals than its total suggests.
+- Two scatter charts (offenses and defenses): trips inside the opponent's 40 per game against red-zone TD %, with the
+  "drives but kicks" corner shaded. Team tables rank every offense by a *stall score* and every defense by a
+  *bend score* (trips above average minus red-zone TD % above average, in standard deviations). Both follow the filters.
+- A weekly board with one row per kicker: projected trips inside the 40 × projected field-goal tries per trip × the
+  team's make rate, P(2+ FGs made) with fair no-vig odds for over 1.5, and projected kicker points with P(8+).
+- A backtest on every season on disk, compared with how often kickers actually made 2+ field goals and with a
+  "total-only" price that just scales the league FG rate by the team's implied points:
+
+  | 2021–2025, regular season | team-games | made 2+ FGs |
+  |---|---|---|
+  | Every kicker | 2,718 | 51.1% |
+  | Stall offense × bend defense | 115 | 50.4% |
+  | Projection 2.0+ FGs made | 412 | 57.8% (total-only price: 50.6%) |
+
+  The plain stall × bend matchup found nothing. The trips × tries-per-trip projection did better, but over 1.5 is
+  often juiced (54.5% break-even at −120, 58.3% at −140), so it only pays where your book's price is short.
+  Field goals are noisy: a one-FG gap in the raw projection showed up as only about 0.2 FGs in results, so the
+  displayed probabilities shrink the projection toward league average by that fitted slope (`CAL_SLOPE`, fitted
+  in-sample on 2021–2025). The flag uses the raw projection and isn't affected by that fit.
 
 ### Where the betting lines come from
 
@@ -83,6 +106,7 @@ pip install -r backend/requirements.txt
 python backend/fetch_data.py               # current season
 python backend/fetch_data.py --since 2021  # backfill 2021 through the current season
 python backend/fetch_data.py --seasons 2024 2025
+python backend/fetch_data.py --model-only  # rebuild model.json (spots + kicks) from the data on disk
 
 python -m http.server 8000 -d web          # then open http://localhost:8000
 ```
@@ -101,6 +125,14 @@ that only serves the repo root or `/docs`, and at the root you just get this REA
 
 Scheduled runs and Pages deployments only happen on the repo's default branch.
 
+## Design
+
+The site follows a "fluid glass" style: a bright white surface with navy ink, Inter for text and Barlow Condensed
+for headings, and glass only on floating layers (the sticky header, the filter bar once it pins, and tooltips).
+Tabs and toggles use a pill that glides to the selection. When a table re-sorts or the filters change, rows slide to
+their new place, washing green if they moved up and red if they moved down. All motion is off under
+`prefers-reduced-motion`.
+
 ## Logos
 
 `web/logos/<TEAM>.png` holds the primary logos from the Uniform Lab pack, resized to 128px. The Rams (`LA`)
@@ -115,11 +147,16 @@ one, drop in `web/logos/LA.png`.
 |---|---|
 | `week`, `type`, `date`, `team`, `opp`, `home`, `pf`, `pa` | game info from the team's point of view (`type` is REG/WC/DIV/CON/SB) |
 | `line` | the team's spread from nflverse (negative = favored); it covered if `pf - pa + line > 0` |
+| `total` | the game's over/under from nflverse |
 | `int_thrown`, `fum_lost`, `fumbles` | giveaways, plus total fumbles (lost or not) |
 | `int_made`, `fum_rec`, `opp_fumbles` | takeaways, plus total opponent fumbles |
+| `drives`, `t40`, `rz`, `rz_td`, `td` | offense: drives, trips inside the 40 and the 20 (a snap from there), red-zone TDs, TD drives |
+| `fga`, `fgm`, `fg50`, `xpa`, `xpm` | offense: field goals tried / made / made from 50+, extra points tried / made |
+| `opp_` + any of the ten above | the same, for the opponent's offense (what this team's defense allowed) |
 
 `model.json` holds the spread signals: backtest and live records per signal, graded flags for the
-current season, and `spots` for the upcoming week.
+current season, and `spots` for the upcoming week. Its `kicks` key holds the kicking backtest, calibration
+tiers, this season's graded flags, and the weekly `board`.
 
 `upcoming` lists the games in the week after the published data, with `spread_line` (positive = home favored),
 `total_line`, and the score if it has already been played.

@@ -7,6 +7,7 @@ Usage:
     python backend/fetch_data.py                   # current season only
     python backend/fetch_data.py --seasons 2024 2025
     python backend/fetch_data.py --since 2020      # 2020 through current season
+    python backend/fetch_data.py --model-only      # rebuild model.json from data on disk
 
 Only fully completed weeks are published (see last_complete_week), so running
 this mid-week never adds Thursday/Sunday games before Monday night is final.
@@ -22,6 +23,7 @@ from pathlib import Path
 import nflreadpy as nfl
 import polars as pl
 
+from kicks import kicks_report
 from model import model_report
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "web" / "data"
@@ -63,6 +65,55 @@ def fumble_counts(pbp: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def drive_stats(pbp: pl.DataFrame) -> pl.DataFrame:
+    """Per team per game: how far its drives got and how they ended.
+
+    A drive "reached" a yard line if it ran a snap from there, so only plays with
+    a down count (extra points, two-point tries and kickoffs carry the spot of the
+    try or kick, not the drive). This is the usual red-zone-trip definition: a
+    40-yard touchdown from the opponent's 45 is not a trip inside the 40.
+    """
+    drives = (
+        pbp.filter(pl.col("posteam").is_not_null() & pl.col("down").is_not_null())
+        .group_by("game_id", "posteam", "fixed_drive")
+        .agg(
+            pl.col("yardline_100").min().alias("best"),
+            pl.col("fixed_drive_result").first().alias("result"),
+        )
+    )
+    td = pl.col("result") == "Touchdown"
+    return drives.group_by("game_id", pl.col("posteam").alias("team")).agg(
+        pl.len().alias("drives"),
+        (pl.col("best") <= 40).sum().alias("t40"),
+        (pl.col("best") <= 20).sum().alias("rz"),
+        ((pl.col("best") <= 20) & td).sum().alias("rz_td"),
+        td.sum().alias("td"),
+    )
+
+
+def kicking_stats(pbp: pl.DataFrame) -> pl.DataFrame:
+    """Per team per game: field goals and extra points (what kicker props settle on)."""
+    fg = pl.col("field_goal_attempt") == 1
+    made = fg & (pl.col("field_goal_result") == "made")
+    xp = pl.col("extra_point_attempt") == 1
+    return (
+        pbp.filter(pl.col("posteam").is_not_null() & (fg | xp))
+        .group_by("game_id", pl.col("posteam").alias("team"))
+        .agg(
+            fg.sum().alias("fga"),
+            made.sum().alias("fgm"),
+            (made & (pl.col("kick_distance") >= 50)).sum().alias("fg50"),
+            xp.sum().alias("xpa"),
+            (xp & (pl.col("extra_point_result") == "good")).sum().alias("xpm"),
+        )
+    )
+
+
+# Drive and kicking columns, stored for the team's offense and (prefixed opp_)
+# for the opponent's offense, i.e. what the team's defense allowed.
+DRIVE_KEYS = ["drives", "t40", "rz", "rz_td", "td", "fga", "fgm", "fg50", "xpa", "xpm"]
+
+
 def build_season(season: int) -> dict:
     full_sched = nfl.load_schedules([season])
     pbp = nfl.load_pbp([season])
@@ -85,6 +136,7 @@ def build_season(season: int) -> dict:
         pl.col("home_score").alias("pf"),
         pl.col("away_score").alias("pa"),
         (-pl.col("spread_line")).alias("line"),
+        pl.col("total_line").alias("total"),
     )
     away = sched.select(
         *cols,
@@ -94,6 +146,7 @@ def build_season(season: int) -> dict:
         pl.col("away_score").alias("pf"),
         pl.col("home_score").alias("pa"),
         pl.col("spread_line").alias("line"),
+        pl.col("total_line").alias("total"),
     )
     games = pl.concat([home, away])
 
@@ -106,6 +159,7 @@ def build_season(season: int) -> dict:
         )
     )
     fum = fumble_counts(pbp)
+    drv = drive_stats(pbp).join(kicking_stats(pbp), on=["game_id", "team"], how="full", coalesce=True)
 
     # Join the team's own giveaways, then the opponent's (= this team's takeaways).
     games = (
@@ -121,10 +175,17 @@ def build_season(season: int) -> dict:
             on=["game_id", "opp"],
             how="left",
         )
+        .join(drv, on=["game_id", "team"], how="left")
+        .join(
+            drv.rename({"team": "opp", **{k: f"opp_{k}" for k in DRIVE_KEYS}}),
+            on=["game_id", "opp"],
+            how="left",
+        )
         .with_columns(
             pl.col(["int", "fl", "fumbles", "opp_int", "opp_fl", "opp_fumbles"])
             .fill_null(0)
-            .cast(pl.Int32)
+            .cast(pl.Int32),
+            pl.col(DRIVE_KEYS + [f"opp_{k}" for k in DRIVE_KEYS]).fill_null(0).cast(pl.Int32),
         )
         .sort("week", "gameday", "team")
     )
@@ -141,6 +202,7 @@ def build_season(season: int) -> dict:
             "pf": r["pf"],
             "pa": r["pa"],
             "line": r["line"],
+            "total": r["total"],
             # Giveaways (offense / ball security)
             "int_thrown": r["int"],
             "fum_lost": r["fl"],
@@ -149,6 +211,9 @@ def build_season(season: int) -> dict:
             "int_made": r["opp_int"],
             "fum_rec": r["opp_fl"],
             "opp_fumbles": r["opp_fumbles"],
+            # Drives, red zone and kicking: offense, then (opp_) what the defense allowed
+            **{k: r[k] for k in DRIVE_KEYS},
+            **{f"opp_{k}": r[f"opp_{k}"] for k in DRIVE_KEYS},
         }
         for r in games.iter_rows(named=True)
     ]
@@ -242,7 +307,12 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--seasons", type=int, nargs="+", help="Seasons to fetch")
     group.add_argument("--since", type=int, help="Fetch this season through current")
+    group.add_argument("--model-only", action="store_true", help="Rebuild model.json from the data on disk")
     args = parser.parse_args()
+
+    if args.model_only:
+        write_model(current)
+        return
 
     if args.seasons:
         seasons = args.seasons
@@ -275,10 +345,14 @@ def write_model(current: int) -> None:
         return
     current = min(current, max(seasons))
     report = model_report(seasons, current)
+    report["kicks"] = kicks_report(seasons, current)
     report["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     (DATA_DIR / "model.json").write_text(json.dumps(report, separators=(",", ":")) + "\n")
     live = report["signals"]["power"]["live"]
     print(f"model: {len(report['spots'])} games scored for {current}; power signal live {live['w']}-{live['l']}")
+    if report["kicks"]:
+        bt = report["kicks"]["signals"]["stall_bend"]["backtest"]
+        print(f"kicks: {len(report['kicks']['board'])} team-games on the board; stall x bend backtest 2+ FGM {bt['rate']} (n={bt['n']})")
 
 
 if __name__ == "__main__":
