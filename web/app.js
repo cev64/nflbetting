@@ -1387,9 +1387,10 @@ function renderUnderWeek(fh, board, box, bt, span) {
   }
   const wk = rows.filter((r) => r.week === state.underWeek).map((r) => ({ ...r, total_line: r.total, fair_odds: fairOdds(r.p) }));
   const t = wk.filter((r) => r.top3), tw = t.filter((r) => r.h1 <= line).length, aw = wk.filter((r) => r.h1 <= line).length;
+  const playoffs = state.underSeason === fh.season && !board.length && (data.upcoming || []).some((u) => u.type !== "REG");
   $("#under-title").textContent = `${weekLabel(state.underWeek).replace(/^w/, "W")} ${state.underSeason}: how it went`;
-  $("#under-lede").innerHTML = `Top 3: <b>${tw} of ${t.length}</b> under · every game: ${aw} of ${wk.length}. Right side: the model's chance,
-    then the actual halftime points (green = 24 or fewer).`;
+  $("#under-lede").innerHTML = `${playoffs ? "<b>No board during the playoffs:</b> this bet covers the regular season only. " : ""}Top 3: <b>${tw} of ${t.length}</b> under
+    · every game: ${aw} of ${wk.length}. Right side: the model's chance, then the actual halftime points (green = 24 or fewer).`;
   if (!wk.length) box.innerHTML = `<p class="muted">No games this week.</p>`;
   else renderUnderChart(box, wk);
 }
