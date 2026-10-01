@@ -44,6 +44,9 @@ shows those records beside the picks. **So far none of them beats the 52.4% need
 **1H Under** (the default tab): one chart ranking the week's games by the chance they're **24 or fewer at
 halftime**, for first-half under 24.5 bets (`backend/firsthalf.py`). Each row shows that chance, the fair (no-vig)
 price, and dashed break-even lines for −150, −200 and −250; bet only when your book's under 24.5 price beats fair.
+- A week strip above the chart looks back at every week since 2022: three dots per week show whether that
+  week's top 3 went under (green) or over (red). Click a week to see its chart with each game's actual halftime
+  points; pick a season from the menu. Ties in the top 3 go to the earlier kickoff.
 - Halftime scores come from play-by-play (the running score at the end of the first half, so defensive and return
   scores, PATs and two-point tries are included). Final scores from the same field match nflverse's schedule.
 - Projection = a + b × the full-game total; the chance of 24 or fewer comes from how far real halftime totals
@@ -178,7 +181,7 @@ one, drop in `web/logos/LA.png`.
 
 `model.json` holds the spread signals: backtest and live records per signal, graded flags for the
 current season, and `spots` for the upcoming week. Its `first_half` key holds the under 24.5 backtest,
-calibration and weekly `board`; its `kicks` key holds the kicking backtest, calibration
+calibration, every predicted game by season (`history`) and the weekly `board`; its `kicks` key holds the kicking backtest, calibration
 tiers, this season's graded flags, and the weekly `board`.
 
 `upcoming` lists the games in the week after the published data, with `spread_line` (positive = home favored),

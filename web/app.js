@@ -17,6 +17,8 @@ const state = {
   atsSort: { key: "ats_pct", dir: "desc" },
   kickSort: {}, // per side ("off" / "def"): { key, dir }
   kickAll: false, // weekly kicker chart: all kickers instead of the top 10
+  underSeason: null, // 1H Under lookback: season and week ("next" = upcoming)
+  underWeek: null,
 };
 const cache = {};
 let data = null; // current season payload
@@ -1281,6 +1283,7 @@ function renderDumbbells(box, spots) {
 // ---------- 1H Under: chance each game is 24 or fewer at halftime ----------
 
 const UNDER_PRICES = [-150, -200, -250]; // break-even reference lines
+const LINE_1H = 24.5;
 const TOP_N = 3;
 
 function renderUnder() {
@@ -1295,11 +1298,7 @@ function renderUnder() {
   const bt = fh.backtest, lv = fh.live;
   const seasons = fh.backtest_seasons;
   const span = seasons.length ? `${seasons[0]}–${seasons[seasons.length - 1]}` : "";
-  $("#under-title").textContent = board.length ? `Week ${board[0].week}: chance of 24 or fewer at half` : "First-half under 24.5";
-  $("#under-lede").innerHTML = `Ranked best to worst. Bet a game only when your book's under 24.5 price is better than the fair price on the right.
-    The week's top 3 went under <b>${pct0(bt.top3.rate)}</b> of the time in ${span} (${bt.top3.under} of ${bt.top3.n}); every game, ${pct0(bt.all.rate)}.`;
-  if (!board.length) box.innerHTML = `<p class="muted">No upcoming games in the schedule.</p>`;
-  else renderUnderChart(box, board);
+  renderUnderWeek(fh, board, box, bt, span);
 
   // How this was tested
   const tile = (label, r, sub, hi) => `<div class="tile ${hi ? "hi" : ""}"><div class="tile-label">${label}</div>
@@ -1314,7 +1313,8 @@ function renderUnder() {
     Each team's first-half scoring (points scored and allowed) was tested as a second input but didn't improve the forecast
     (Brier ${bt.all.brier_profile} with it vs ${bt.all.brier} without; lower is better, ${bt.all.brier_base} for a flat base rate):
     the market's total already reflects it. <b>What can't be tested:</b> nflverse has no first-half odds, so this measures how
-    accurate the probabilities are, not whether betting them made money. Break-even is ${be(-150)} at −150, ${be(-200)} at −200, ${be(-250)} at −250.`;
+    accurate the probabilities are, not whether betting them made money. Past weeks in the week strip are rebuilt with the same
+    model and the total nflverse has on file for each game, which is usually close to the closing line rather than the 8am number. Break-even is ${be(-150)} at −150, ${be(-200)} at −200, ${be(-250)} at −250.`;
   const live = Object.fromEntries((fh.calibration.live || []).map((r) => [r.lo, r]));
   $("#under-cal").innerHTML = `<thead><tr><th>Model said</th><th class="sep">${span} games</th><th>Avg model</th><th>Actually under</th>
     <th class="sep">${fh.season} games</th><th>Actually under</th></tr></thead><tbody>${fh.calibration.backtest
@@ -1325,17 +1325,77 @@ function renderUnder() {
           <td class="sep">${l.n || 0}</td><td>${l.n ? `${pct0(l.rate)} <span class="muted">${l.under}/${l.n}</span>` : "–"}</td></tr>`;
       })
       .join("")}</tbody>`;
-  const hist = fh.live_history || [];
-  $("#under-history").innerHTML = hist.length
-    ? `<thead><tr><th>Wk</th><th class="l">Game</th><th>Total</th><th>Model</th><th>Halftime pts</th><th>Under 24.5</th></tr></thead><tbody>${hist
-        .map((h) => {
-          const hit = h.h1 <= fh.line;
-          return `<tr><td>${h.week}</td><td class="l">${h.away} @ ${h.home}</td><td>${h.total}</td><td>${pct0(h.p)}</td><td>${h.h1}</td>
-            <td><span class="chip ${hit ? "chip-win" : "chip-loss"}">${hit ? "✓ under" : "✗ over"}</span></td></tr>`;
-        })
-        .join("")}</tbody>`
-    : `<tbody><tr><td class="muted">No ${fh.season} games graded yet.</td></tr></tbody>`;
 }
+
+let lastUnderKey = null;
+const shortWeek = (w) => ({ 19: "WC", 20: "DIV", 21: "CONF", 22: "SB" })[w] || `Wk ${w}`;
+const UNDER_NEXT = "next";
+
+// Week strip (each past week's top-3 results as pips) + that week's chart.
+// The upcoming week shows fair prices; past weeks show what happened at halftime.
+function renderUnderWeek(fh, board, box, bt, span) {
+  const hist = fh.history || {};
+  const seasons = Object.keys(hist).map(Number);
+  if (!seasons.includes(fh.season)) seasons.push(fh.season);
+  seasons.sort((a, b) => b - a);
+  if (!seasons.includes(state.underSeason)) state.underSeason = fh.season;
+  const sel = $("#under-season");
+  sel.innerHTML = seasons.map((y) => `<option value="${y}" ${y === state.underSeason ? "selected" : ""}>${y}</option>`).join("");
+
+  const rows = hist[state.underSeason] || [];
+  const weeks = [...new Set(rows.map((r) => r.week))].sort((a, b) => a - b);
+  const hasNext = state.underSeason === fh.season && board.length > 0;
+  const valid = [...weeks, ...(hasNext ? [UNDER_NEXT] : [])];
+  if (!valid.includes(state.underWeek)) state.underWeek = hasNext ? UNDER_NEXT : weeks[weeks.length - 1];
+
+  // Season record
+  const line = fh.line;
+  const top = rows.filter((r) => r.top3), topW = top.filter((r) => r.h1 <= line).length, allW = rows.filter((r) => r.h1 <= line).length;
+  $("#under-record").innerHTML = rows.length
+    ? `<b>${state.underSeason}</b> · top 3 each week: <b>${topW} of ${top.length}</b> under (${pct0(topW / top.length)}) · every game: ${allW} of ${rows.length} (${pct0(allW / rows.length)})`
+    : `${state.underSeason} · no completed weeks yet`;
+
+  // Strip
+  const strip = $("#under-weeks");
+  const prevSel = strip.querySelector(".wk.on")?.dataset.w;
+  strip.innerHTML = weeks
+    .map((w) => {
+      const t = rows.filter((r) => r.week === w && r.top3);
+      const won = t.filter((r) => r.h1 <= line).length;
+      return `<button class="wk" data-w="${w}" title="${weekLabel(w)}: top 3 went ${won} of ${t.length} under">${shortWeek(w)}
+        <span class="pips">${t.map((r) => `<i class="pip ${r.h1 <= line ? "w" : "l"}"></i>`).join("")}</span><span class="rec">${won}/${t.length}</span></button>`;
+    })
+    .join("") + (hasNext ? `<button class="wk" data-w="${UNDER_NEXT}">${shortWeek(board[0].week)}<span class="pips"><i class="pip"></i><i class="pip"></i><i class="pip"></i></span><span class="rec">next</span></button>` : "");
+  strip.querySelectorAll(".wk").forEach((b) => {
+    const on = String(state.underWeek) === b.dataset.w;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on);
+    if (on && prevSel != null && prevSel !== b.dataset.w) replay(b, "pop");
+    if (on) strip.scrollLeft = Math.max(0, b.offsetLeft - strip.clientWidth / 2 + b.offsetWidth / 2);
+  });
+
+  // Chart (slides in when the selected week changes)
+  const key = `${state.underSeason}:${state.underWeek}`;
+  if (lastUnderKey && lastUnderKey !== key) requestAnimationFrame(() => replay(box, "swap"));
+  lastUnderKey = key;
+  if (state.underWeek === UNDER_NEXT) {
+    $("#under-title").textContent = `Week ${board[0].week}: chance of 24 or fewer at half`;
+    $("#under-lede").innerHTML = `Ranked best to worst. Bet a game only when your book's under 24.5 price is better than the fair price on the right.
+      The week's top 3 went under <b>${pct0(bt.top3.rate)}</b> of the time in ${span} (${bt.top3.under} of ${bt.top3.n}); every game, ${pct0(bt.all.rate)}.`;
+    renderUnderChart(box, board);
+    return;
+  }
+  const wk = rows.filter((r) => r.week === state.underWeek).map((r) => ({ ...r, total_line: r.total, fair_odds: fairOdds(r.p) }));
+  const t = wk.filter((r) => r.top3), tw = t.filter((r) => r.h1 <= line).length, aw = wk.filter((r) => r.h1 <= line).length;
+  $("#under-title").textContent = `${weekLabel(state.underWeek).replace(/^w/, "W")} ${state.underSeason}: how it went`;
+  $("#under-lede").innerHTML = `Top 3: <b>${tw} of ${t.length}</b> under · every game: ${aw} of ${wk.length}. Right side: the model's chance,
+    then the actual halftime points (green = 24 or fewer).`;
+  if (!wk.length) box.innerHTML = `<p class="muted">No games this week.</p>`;
+  else renderUnderChart(box, wk);
+}
+
+// No-vig American odds for probability p.
+const fairOdds = (p) => (p <= 0 || p >= 1 ? null : p >= 0.5 ? Math.round((-100 * p) / (1 - p)) : Math.round((100 * (1 - p)) / p));
 
 // One row per game: a dot at the chance of 24 or fewer at half, with dashed
 // break-even lines for common under 24.5 prices. Right label: chance and fair price.
@@ -1345,7 +1405,9 @@ function renderUnderChart(box, board) {
   const H = m.t + board.length * RH + m.b;
   const lo = narrow ? 0.4 : 0.3, hi = narrow ? 0.8 : 0.85;
   const x = (v) => m.l + ((Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo)) * (W - m.l - m.r);
-  const top = new Set(board.filter((g) => g.p != null).slice(0, TOP_N).map((g) => g.game_id));
+  const top = new Set(
+    board.some((g) => g.top3 != null) ? board.filter((g) => g.top3).map((g) => g.game_id) : board.filter((g) => g.p != null).slice(0, TOP_N).map((g) => g.game_id)
+  );
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Chance each game is 24 or fewer at halftime"><g class="grid">`;
   for (let v = lo; v <= hi + 1e-9; v += 0.1) svg += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t - 4}" y2="${H - m.b}"/>`;
   svg += `</g>`;
@@ -1365,6 +1427,7 @@ function renderUnderChart(box, board) {
     svg += logoAt(g.home, 72) + `<text class="rowlabel" x="92" y="${cy - 4}">${g.home}</text>`;
     const final = g.home_score != null;
     const sub = final ? `Final ${g.away_score}-${g.home_score}` : `${gameWhen(g).split(",")[0]}${g.total_line != null ? ` · total ${g.total_line}` : ""}`;
+    const graded = g.h1 != null;
     svg += `<text class="rowsub" x="4" y="${cy + 13}">${sub}</text>`;
     if (g.p == null) {
       svg += `<text class="rowsub" x="${m.l + 6}" y="${cy + 4}">no line yet</text></g>`;
@@ -1373,7 +1436,9 @@ function renderUnderChart(box, board) {
     svg += `<line class="db-line ${isTop ? "flagged" : ""}" x1="${x(lo)}" x2="${x(g.p)}" y1="${cy}" y2="${cy}"/>`;
     svg += `<circle class="db-model ${isTop ? "flagged" : ""}" cx="${x(g.p)}" cy="${cy}" r="7"/>`;
     svg += `<text class="val ${isTop ? "flagged" : ""}" x="${W - m.r + 12}" y="${cy - 1}" style="font-size:15px">${pct0(g.p)}</text>`;
-    svg += `<text class="rowsub" x="${W - m.r + 12}" y="${cy + 13}">fair ${odds(g.fair_odds)}</text></g>`;
+    svg += graded
+      ? `<text class="rowsub ${g.h1 <= LINE_1H ? "res-w" : "res-l"}" x="${W - m.r + 12}" y="${cy + 13}">${g.h1}${narrow ? "" : " at half"} ${g.h1 <= LINE_1H ? "✓" : "✗"}</text></g>`
+      : `<text class="rowsub" x="${W - m.r + 12}" y="${cy + 13}">fair ${odds(g.fair_odds)}</text></g>`;
   });
   box.innerHTML = svg + `</svg>`;
   box.querySelectorAll(".rrow").forEach((el) => {
@@ -1385,12 +1450,12 @@ function renderUnderChart(box, board) {
     };
     const html = `<div class="tt-title">${g.away} @ ${g.home} · ${gameWhen(g)}${g.time ? ` ${g.time} ET` : ""}</div>` + ttGrid([
       ["Full-game total", g.total_line ?? "no line yet"],
-      ["Spread", lineText(g).split(" · ")[0]],
+      ...(g.spread_line !== undefined ? [["Spread", lineText(g).split(" · ")[0]]] : []),
+      ...(g.h1 != null ? [["Halftime", `${g.away} ${g.h1_away}, ${g.home} ${g.h1_home} (${g.h1}) ${g.h1 <= LINE_1H ? "✓ under" : "✗ over"}`]] : []),
       ["Projected 1H points", g.proj == null ? "–" : `${g.proj} (80%: ${Math.round(g.lo)}–${Math.round(g.hi)})`],
       ["Chance of 24 or fewer", g.p == null ? "–" : pct0(g.p)],
       ["Fair price, under 24.5", odds(g.fair_odds)],
-      team(g.away),
-      team(g.home),
+      ...(g.teams ? [team(g.away), team(g.home)] : []),
     ]);
     el.addEventListener("mousemove", (ev) => showTip(html, ev));
     el.addEventListener("mouseleave", hideTip);
@@ -1584,6 +1649,13 @@ function wire() {
     btn.firstChild.textContent = open ? btn.firstChild.textContent.replace(/^Show/, "Hide") : btn.firstChild.textContent.replace(/^Hide/, "Show");
   });
   $("#kicks-all").addEventListener("click", () => { state.kickAll = !state.kickAll; render(); });
+  $("#under-season").addEventListener("change", (e) => { state.underSeason = Number(e.target.value); state.underWeek = null; render(); });
+  $("#under-weeks").addEventListener("click", (e) => {
+    const b = e.target.closest(".wk");
+    if (!b) return;
+    state.underWeek = b.dataset.w === UNDER_NEXT ? UNDER_NEXT : Number(b.dataset.w);
+    render();
+  });
   $("#upcoming").addEventListener("click", (e) => {
     const g = e.target.closest(".game");
     if (g) openMatchup(g.dataset.a, g.dataset.b);

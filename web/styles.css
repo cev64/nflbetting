@@ -464,3 +464,25 @@ body[data-view="under"] main.wrap { padding-top: 18px; }
   .tab-long { display: none; }
   .tab-short { display: inline; }
 }
+
+/* 1H Under: week-by-week lookback strip */
+.weeks-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12.5px; }
+.weeks-head select { min-width: 96px; width: auto; }
+.weeks { display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 10px; margin: 0 -2px 10px; scrollbar-width: thin; }
+.wk {
+  flex: 0 0 auto; min-width: 54px; padding: 6px 8px 5px; border-radius: 10px; background: var(--surface);
+  border: 1.5px solid transparent; cursor: pointer; text-align: center; font: 600 12px var(--body); color: var(--ink-2);
+  transition: background-color .25s var(--ease), border-color .25s var(--ease), transform .18s var(--ease);
+}
+@media (hover: hover) { .wk:hover { background: var(--surface-2); } }
+.wk:active { transform: scale(.96); }
+.wk.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+.wk.pop { animation: pickIn .4s var(--ease); }
+.wk .pips { display: flex; gap: 3px; justify-content: center; margin-top: 5px; }
+.wk .pip { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
+.wk .pip.w { background: var(--good); }
+.wk .pip.l { background: var(--bad); }
+.wk .rec { display: block; font-size: 10.5px; font-weight: 500; color: var(--ink-3); margin-top: 2px; }
+.chart .res-w { fill: var(--good); }
+.chart .res-l { fill: var(--bad); }
+.chart.swap > svg { animation: riseIn .45s var(--ease) both; }
