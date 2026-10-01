@@ -3,7 +3,8 @@
 Projected halftime total = a + b x the market's full-game total (nflverse's
 consensus line), fitted by least squares. The chance of 24 or fewer comes from
 the spread of past misses (actual minus projected), not from an assumed Poisson
-or normal shape.
+or normal shape. Regular season only: playoff games are left out of the fit, the
+backtest, the lookback and the weekly board.
 
 A team first-half profile was tested as a second input: each team's first-half
 points scored and allowed per game entering the game (blended with last season
@@ -35,10 +36,15 @@ def has_h1(season: dict | None) -> bool:
     return bool(season and season["games"] and "h1_pf" in season["games"][0])
 
 
+def reg(g: dict) -> bool:
+    """Regular-season game with a halftime score. Playoffs are left out of this bet entirely."""
+    return g["type"] == "REG" and g.get("h1_pf") is not None
+
+
 def home_games(season: dict) -> list[dict]:
-    """One row per game (home side), regular season and playoffs, with a halftime score."""
+    """One row per regular-season game (home side) with a halftime score."""
     return sorted(
-        (g for g in season["games"] if g["home"] and g.get("h1_pf") is not None),
+        (g for g in season["games"] if g["home"] and reg(g)),
         key=lambda g: g["date"],
     )
 
@@ -47,12 +53,12 @@ class H1State:
     """First-half points scored / allowed per game for any team entering a date."""
 
     def __init__(self, season: dict, prev: dict | None):
-        games = [g for g in season["games"] if g.get("h1_pf") is not None]
+        games = [g for g in season["games"] if reg(g)]
         self.by_team: dict[str, list[dict]] = defaultdict(list)
         for g in games:
             self.by_team[g["team"]].append(g)
         self.games = games
-        prev_games = [g for g in prev["games"] if g.get("h1_pf") is not None] if has_h1(prev) else []
+        prev_games = [g for g in prev["games"] if reg(g)] if has_h1(prev) else []
         self.prev_team: dict[str, tuple[float, float]] = {}
         agg: dict[str, list[float]] = defaultdict(lambda: [0, 0, 0])
         for g in prev_games:
@@ -133,8 +139,9 @@ def season_rows(season: dict, prev: dict | None) -> list[dict]:
         if g.get("total") is None:
             continue
         prof, _, _ = profile(st, g["team"], g["opp"], g["date"])
-        out.append({"season": season["season"], "week": g["week"], "date": g["date"], "home": g["team"], "away": g["opp"],
-                    "total": g["total"], "profile": prof, "h1": g["h1_pf"] + g["h1_pa"], "type": g["type"]})
+        out.append({"season": season["season"], "week": g["week"], "date": g["date"], "game_id": g["game_id"],
+                    "home": g["team"], "away": g["opp"], "total": g["total"], "profile": prof,
+                    "h1": g["h1_pf"] + g["h1_pa"], "h1_home": g["h1_pf"], "h1_away": g["h1_pa"], "type": g["type"]})
     return out
 
 
@@ -178,11 +185,17 @@ def first_half_report(seasons: dict[int, dict], current: int) -> dict | None:
     live = [r for r in scored if r["season"] == current]
 
     # Each week's three highest-probability games, as a simple selection rule.
+    # Ties (same total, same chance) go to the earlier kickoff, then alphabetically.
+    by_week: dict[tuple, list[dict]] = defaultdict(list)
+    for r in scored:
+        by_week[(r["season"], r["week"])].append(r)
+    for wk in by_week.values():
+        wk.sort(key=lambda r: (-r["p"], r["date"], r["home"]))
+        for i, r in enumerate(wk):
+            r["top3"] = i < 3
+
     def top3(rs: list[dict]) -> list[dict]:
-        by_week: dict[tuple, list[dict]] = defaultdict(list)
-        for r in rs:
-            by_week[(r["season"], r["week"])].append(r)
-        return [r for wk in by_week.values() for r in sorted(wk, key=lambda r: -r["p"])[:3]]
+        return [r for r in rs if r["top3"]]
 
     calib = {
         phase: [
@@ -200,7 +213,7 @@ def first_half_report(seasons: dict[int, dict], current: int) -> dict | None:
         pbeta, _ = fit(train)
         cur = usable[current]
         st = H1State(cur, usable.get(current - 1))
-        for u in cur.get("upcoming", []):
+        for u in (u for u in cur.get("upcoming", []) if u["type"] == "REG"):
             prof, h, a = profile(st, u["home"], u["away"], u["date"])
             row = {
                 "game_id": u["game_id"], "week": u["week"], "date": u["date"], "time": u["time"],
@@ -232,9 +245,15 @@ def first_half_report(seasons: dict[int, dict], current: int) -> dict | None:
         "backtest": {"all": summary(bt), "top3": summary(top3(bt)), "p70": summary([r for r in bt if r["p"] >= 0.7])},
         "live": {"all": summary(live), "top3": summary(top3(live)), "p70": summary([r for r in live if r["p"] >= 0.7])},
         "calibration": calib,
-        "live_history": sorted(
-            ({k: r[k] for k in ("week", "date", "home", "away", "total", "proj", "p", "h1")} for r in live),
-            key=lambda r: (r["date"], r["home"]), reverse=True,
-        ),
+        # Every predicted game, by season, for the week-by-week lookback (best chance first within a week).
+        "history": {
+            yr: [
+                {k: r[k] for k in ("week", "type", "date", "game_id", "home", "away", "total", "proj", "lo", "hi", "p",
+                                   "h1", "h1_home", "h1_away", "top3")}
+                for wk in sorted({r["week"] for r in scored if r["season"] == yr})
+                for r in by_week[(yr, wk)]
+            ]
+            for yr in sorted({r["season"] for r in scored})
+        },
         "board": board,
     }

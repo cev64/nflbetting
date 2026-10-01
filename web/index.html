@@ -74,9 +74,14 @@
 
     <section id="view-under" class="view">
       <div class="card">
+        <div class="weeks-head">
+          <select id="under-season" aria-label="Season"></select>
+          <span id="under-record" class="muted"></span>
+        </div>
+        <div id="under-weeks" class="weeks" role="group" aria-label="Week"></div>
         <h3 class="card-title" id="under-title">First-half under 24.5</h3>
         <p class="card-sub" id="under-lede"></p>
-        <div class="chart-legend"><span><i class="dotk"></i>Top 3 this week</span><span><i class="dotk g"></i>Other games</span>
+        <div class="chart-legend"><span><i class="dotk"></i>Week's top 3</span><span><i class="dotk g"></i>Other games</span>
           <span class="muted">Dashed lines: break-even for under 24.5 at that price</span></div>
         <div id="under-chart" class="chart"></div>
       </div>
@@ -89,10 +94,6 @@
             <h3 class="card-title">Calibration</h3>
             <p class="card-sub">When the model said X%, how often was it 24 or fewer at half? Every season was predicted by a fit on earlier seasons only.</p>
             <div class="table-scroll"><table id="under-cal" class="stats cal"></table></div>
-          </div>
-          <div class="card">
-            <h3 class="card-title">This season's games</h3>
-            <div class="table-scroll"><table id="under-history" class="stats log"></table></div>
           </div>
         </div></div></div>
       </div>

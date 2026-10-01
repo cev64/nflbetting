@@ -41,9 +41,13 @@ Every signal is backtested on all seasons on disk (2021–2025) and tracked live
 shows those records beside the picks. **So far none of them beats the 52.4% needed at −110.** They're all near
 50%, because the spread already prices in turnover luck. Treat them as a screen, not as bets.
 
-**1H Under** (the default tab): one chart ranking the week's games by the chance they're **24 or fewer at
+**1H Under** (the default tab, regular season only): one chart ranking the week's games by the chance they're **24 or fewer at
 halftime**, for first-half under 24.5 bets (`backend/firsthalf.py`). Each row shows that chance, the fair (no-vig)
 price, and dashed break-even lines for −150, −200 and −250; bet only when your book's under 24.5 price beats fair.
+- Playoff games are left out of the fit, the backtest, the lookback and the weekly board.
+- A week strip above the chart looks back at every regular-season week since 2022: three dots per week show whether that
+  week's top 3 went under (green) or over (red). Click a week to see its chart with each game's actual halftime
+  points; pick a season from the menu. Ties in the top 3 go to the earlier kickoff.
 - Halftime scores come from play-by-play (the running score at the end of the first half, so defensive and return
   scores, PATs and two-point tries are included). Final scores from the same field match nflverse's schedule.
 - Projection = a + b × the full-game total; the chance of 24 or fewer comes from how far real halftime totals
@@ -51,7 +55,8 @@ price, and dashed break-even lines for −150, −200 and −250; bet only when 
   seasons only.
 - Each team's first-half points scored and allowed were tested as a second input and **didn't improve the forecast**:
   the market's total already reflects them. They're shown in each game's tooltip as context.
-- 2022–2025: 63% of games were 24 or fewer at half (720 of 1,139); the week's top 3 by the model, 71% (179 of 252).
+- 2022–2025 regular seasons: 64% of games were 24 or fewer at half (693 of 1,087); the week's top 3 by the model,
+  74% (160 of 216).
   The probabilities are well calibrated (the "Show how this was tested" panel).
 - **Not tested: profit.** nflverse has no first-half odds, so this can't show whether betting the under made money
   at the prices actually offered. An odds feed (e.g. The Odds API's `totals_h1` / `alternate_totals_h1`) would allow that.
@@ -178,7 +183,7 @@ one, drop in `web/logos/LA.png`.
 
 `model.json` holds the spread signals: backtest and live records per signal, graded flags for the
 current season, and `spots` for the upcoming week. Its `first_half` key holds the under 24.5 backtest,
-calibration and weekly `board`; its `kicks` key holds the kicking backtest, calibration
+calibration, every predicted game by season (`history`) and the weekly `board`; its `kicks` key holds the kicking backtest, calibration
 tiers, this season's graded flags, and the weekly `board`.
 
 `upcoming` lists the games in the week after the published data, with `spread_line` (positive = home favored),
