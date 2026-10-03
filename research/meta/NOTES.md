@@ -104,3 +104,10 @@ The target is not reachable with these inputs, and no meta-design changes that.
 - Market-level SU (about 66.4% over 2012-2025) is the honest ceiling of this ensemble.
 - The only place to gain is the roughly 23% of games with spreads of 2.5 or less. The market is 52-54% there, and no base model or combination beats it out of sample.
 - Reaching 68% overall would need about 60% in pick'em games with everything else held equal.
+
+## Wave-2 base models
+`select_models.py` uses a dev-only rule: a model is added if it improves dev SU or ATS log-loss by at least 0.0002, without making the other worse.
+- `wave2_close` and `wave2_market` (first versions, 05:14) changed dev log-loss by < 0.0001. Both were skipped.
+- Holdout, for information only: no change.
+
+To include later or improved versions, re-run `select_models.py` and then `run.py`. Any model can also be forced in with `run.py --models ...`.

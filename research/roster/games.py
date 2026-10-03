@@ -10,7 +10,7 @@ TEAM_FEATS = ([f"U_{u}" for u in UNITS] + [f"delta_{u}" for u in UNITS] + [f"inj
 
 
 def game_matrix(sched: pl.DataFrame, feat: pl.DataFrame) -> pl.DataFrame:
-    f = feat.select("game_id", "team", *TEAM_FEATS)
+    f = feat.select("game_id", "team", *[pl.col(c).cast(pl.Float64) for c in TEAM_FEATS])
     h = f.rename({c: f"home_{c}" for c in TEAM_FEATS} | {"team": "home_team"})
     a = f.rename({c: f"away_{c}" for c in TEAM_FEATS} | {"team": "away_team"})
     g = (sched.select("game_id", "season", "week", "game_type", "date", "home_team", "away_team", "result",

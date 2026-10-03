@@ -96,12 +96,29 @@
         </div>
         <div class="card stack-card">
           <div class="stack" id="stack-diagram"></div>
-          <p class="card-sub stack-note">
-            Each model above estimates the chance the home team wins and the expected margin. The stack doesn't simply average them:
-            it learns, from seasons it never trained on, how much to trust each model and in which spots they disagree in useful ways —
-            the models "talking to each other". The winner pick is the side above 50%; the spread pick compares the ensemble's
-            projected margin with the betting line.
+          <p class="card-sub stack-note" id="stack-note">
+            Each model estimates the chance the home team wins and the expected margin. The ensemble doesn't simply average them:
+            it learns, only from seasons it never trained on, how much to trust the betting market and each family of models.
           </p>
+        </div>
+
+        <div class="two-up">
+          <div class="card">
+            <h3 class="card-title">What the ensemble listens to</h3>
+            <p class="card-sub">How much each input moves the ensemble's probabilities this season. Each bar is the input's coefficient × its typical size, on the log-odds scale. The betting market itself carries most of the weight and isn't shown.</p>
+            <div id="listen" class="listen"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">When models argue with the market</h3>
+            <p class="card-sub">2012–2025: in games where a family of models picked the other team from the betting favorite, how often the model was right. Below 50% means the market won the argument.</p>
+            <div class="table-scroll"><table class="stats dissent" id="dissent"></table></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Best bets against the spread</h3>
+          <p class="card-sub" id="bb-sub"></p>
+          <div class="table-scroll"><table class="stats" id="bestbets"></table></div>
         </div>
 
         <div class="tiles" id="model-tiles"></div>

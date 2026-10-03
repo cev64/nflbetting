@@ -207,10 +207,25 @@ def injuries(tg: pl.DataFrame) -> pl.DataFrame:
         pl.col("season").cast(pl.Int32), pl.col("week").cast(pl.Int32)).filter(pl.col("gsis_id").is_not_null())
     inj = inj.join(tg.select("game_id", "season", "week", "team", "kick"), on=["season", "week", "team"], how="inner")
     inj = inj.filter(pl.col("date_modified").is_null() | (pl.col("date_modified") < pl.col("kick")))
+    inj = inj.with_columns(pl.lit(0).alias("stale"))
+    # weeks whose reports are not published yet (upcoming slate): carry each team's latest report of the same
+    # season forward, flagged stale. Only applies to (season, week) with no report rows for any team.
+    have = inj.select("season", "week").unique()
+    last_s = inj["season"].max()
+    todo = tg.filter((pl.col("season") == last_s) & (pl.col("game_type") == "REG")).join(have, on=["season", "week"], how="anti")
+    if todo.height:
+        lastwk = inj.filter(pl.col("season") == last_s).group_by("team").agg(pl.col("week").max().alias("wk_src"))
+        src = inj.filter(pl.col("season") == last_s).join(lastwk, left_on=["team", "week"], right_on=["team", "wk_src"], how="inner").drop("game_id", "kick")
+        add = todo.select("game_id", "team", "kick", "week").join(lastwk, on="team", how="inner").filter(
+            pl.col("week") > pl.col("wk_src")).select("game_id", "team", "kick")
+        add = add.join(src.drop("week", "season", "stale"), on="team", how="inner").with_columns(pl.lit(1).alias("stale"))
+        cols = ["game_id", "team", "kick", "gsis_id", "full_name", "position", "report_status", "practice_status",
+                "stale"]
+        inj = pl.concat([inj.select(cols), add.select(cols)], how="vertical_relaxed")
     inj = inj.with_columns(
         pl.struct("report_status", "practice_status").map_elements(
             lambda r: _p_miss(r["report_status"], r["practice_status"]), return_dtype=pl.Float64).alias("p_miss"),
         pg_expr("position").alias("inj_grp"))
     return (inj.sort("p_miss", descending=True).unique(["game_id", "team", "gsis_id"], keep="first")
             .select("game_id", "team", "gsis_id", "full_name", "position", "inj_grp", "report_status",
-                    "practice_status", "p_miss"))
+                    "practice_status", "p_miss", "stale"))

@@ -34,7 +34,7 @@ def _status_class(st: pl.Expr) -> pl.Expr:
             .otherwise(pl.lit("minor")))
 
 
-def prev_games(tg: pl.DataFrame, n: int) -> pl.DataFrame:
+def prev_games(tg: pl.DataFrame, n: int, max_days: int = 400) -> pl.DataFrame:
     """For each (game_id, team): the franchise's previous n games (game_id_prev, lag 1..n)."""
     t = tg.sort("fr", "kick").with_columns(pl.int_range(pl.len()).over("fr").alias("ix"))
     rows = []
@@ -43,7 +43,7 @@ def prev_games(tg: pl.DataFrame, n: int) -> pl.DataFrame:
     lk = pl.concat(rows).join(t.select("fr", "ix", pl.col("game_id").alias("gprev"), pl.col("kick").alias("kprev")),
                               on=["fr", "ix"], how="inner")
     return lk.join(tg.select("game_id", "team", "kick"), on=["game_id", "team"]).filter(
-        (pl.col("kprev") < pl.col("kick")) & ((pl.col("kick") - pl.col("kprev")).dt.total_days() < 400)
+        (pl.col("kprev") < pl.col("kick")) & ((pl.col("kick") - pl.col("kprev")).dt.total_days() <= max_days)
     ).select("game_id", "team", "gprev", "lag")
 
 
@@ -54,7 +54,8 @@ def candidates(tg: pl.DataFrame, dc: pl.DataFrame, inj: pl.DataFrame, plog: pl.D
     c = c.join(inj.select("game_id", "team", "gsis_id", "p_miss", "report_status"), on=["game_id", "team", "gsis_id"],
                how="left")
     # played the franchise's previous game? (only defined when that game has snap counts)
-    pg = prev_games(tg, 1).select("game_id", "team", "gprev")
+    # previous game must be recent (same season, <= 30 days): last season's finale often rests starters
+    pg = prev_games(tg, 1, max_days=30).select("game_id", "team", "gprev")
     c = c.join(pg, on=["game_id", "team"], how="left")
     played = plog.filter(pl.col("fge") > 0).select(pl.col("game_id").alias("gprev"), "gsis_id", pl.lit(1).alias("pp"))
     c = c.join(played, on=["gprev", "gsis_id"], how="left").with_columns(
@@ -86,6 +87,12 @@ def build(tg: pl.DataFrame, dc: pl.DataFrame, inj: pl.DataFrame, plog: pl.DataFr
     if ptab is None:
         ptab = calibrate_play(c, plog)
     c = c.join(ptab, on=["dbk", "st", "prev_played"], how="left").with_columns(pl.col("p_play").fill_null(0.5))
+    # relative to a healthy player at the same chart depth (status none, played last game) so that a fully
+    # healthy lineup has P = 1 and value-rich teams do not carry a spurious "expected absence" cost
+    healthy = ptab.filter((pl.col("st") == "none") & (pl.col("prev_played") == "1")).select(
+        "dbk", pl.col("p_play").alias("p_h"))
+    c = c.join(healthy, on="dbk", how="left").with_columns(
+        (pl.col("p_play") / pl.col("p_h")).clip(0.0, 1.0).alias("p_play")).drop("p_h")
     vcols = [f"v_{m}" for m in METRICS]
     keep = ["gsis_id", "date", "grp", *vcols, "u_share", "recent_apps", "exp_fge", "last_date", "tgt_rate"]
     vals = player_values(c.select("gsis_id", "date", "grp").unique(), plog, cal).select(keep)

@@ -33,9 +33,30 @@ if __name__ == "__main__":
     r2 = ref.copy(); r2["p_home"] = d.loc[ref.index, "p_ml"].fillna(0.5).values
     rows.append(score(r2, d, "raw no-vig ML (0.5 if missing)"))
     base = dict(bw=1.0, C=1.0, sigma_total=False)
+    # grid 1: kernel (key-number-aware, nonparametric) spread map, bandwidth, total-scaled spread
+    for bw, st in itertools.product([0.5, 1.0, 1.5, 2.5], [False, True]):
+        cfg = dict(base, bw=bw, sigma_total=st, features=("l_kernel", "l_ml_minus_kernel"))
+        rows.append(score(market_walk_forward(d, TEST, cfg, train_from=2006), d, f"kernel+mldiff bw={bw} sigT={st}"))
+    # grid 2: feature sets
+    sets = {
+        "normal": ("l_normal",), "normal_tot": ("l_normal_tot",), "normal+tot_c": ("l_normal", "tot_c"),
+        "kernel": ("l_kernel",), "ml_or_normal": ("l_ml_or_normal", "has_ml"),
+        "normal+mldiff": ("l_normal", "l_ml_minus_normal"), "normal+juice": ("l_normal", "l_cov_juice"),
+        "normal+juiceclose": ("l_normal", "l_cov_juice_close"),
+        "normal+mldiff+juice": ("l_normal", "l_ml_minus_normal", "l_cov_juice"),
+        "normal+neutral": ("l_normal", "neutral"), "ml_x_tot": ("l_ml_or_normal", "has_ml", "tot_c", "l_ml_x_tot"),
+    }
+    for tf in [1999, 2006]:
+        for name, fs in sets.items():
+            if tf == 1999 and any("ml" in x for x in fs):
+                continue
+            rows.append(score(market_walk_forward(d, TEST, dict(base, features=fs), train_from=tf), d, f"{name} from{tf}"))
+    # grid 3: recency half-life
     for hl in [None, 10, 6, 4, 2]:
         for fs in [("l_normal",), ("l_normal", "l_cov_juice"), ("l_ml_or_normal", "has_ml"), ("l_normal", "l_ml_minus_normal", "l_cov_juice")]:
             tf = 2006 if any("ml" in x for x in fs) else 1999
             cfg = dict(base, features=fs, half_life=hl)
             rows.append(score(market_walk_forward(d, TEST, cfg, train_from=tf), d, f"{'+'.join(fs)} hl={hl} from{tf}"))
-    print(pd.DataFrame(rows).to_string())
+    r = pd.DataFrame(rows)
+    print(r.to_string())
+    r.to_csv("out/dev_market_grid.csv", index=False)

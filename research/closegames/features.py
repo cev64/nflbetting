@@ -129,7 +129,10 @@ def kicker_features(pbp: pd.DataFrame, sched_dates: pd.DataFrame, tg: pd.DataFra
     lg = fg[fg["long"] == 1]
     v_long, n_long = as_of_decayed(lg["kicker_player_id"].values, lg["t"].values, lg["oe"].values,
                                    np.ones(len(lg)), q_key, m["t"].values, half_life=730.0, K=15.0, prior=0.0)
+    names = (pbp[pbp["kicker_player_id"].notna()].drop_duplicates("kicker_player_id", keep="last")
+             .set_index("kicker_player_id")["kicker_player_name"])
     out = m[["game_id", "team"]].copy()
+    out["kicker_name"] = m["kicker"].map(names).values
     out["k_fgoe"] = v_all
     out["k_fgoe_long"] = v_long
     out["k_log_att"] = np.log1p(n_all)
@@ -201,10 +204,12 @@ def build(sched: pd.DataFrame, max_season: int | None = None) -> pd.DataFrame:
     f = tg[["game_id", "team", "side"]]
     for p in parts:
         f = f.merge(p, on=["game_id", "team"], how="left")
-    cols = [c for c in f.columns if c not in ("game_id", "team", "side")]
+    cols = [c for c in f.columns if c not in ("game_id", "team", "side", "kicker_name")]
+    txt = f.pivot(index="game_id", columns="side", values="kicker_name")
+    txt.columns = [f"{c[0]}_kicker_name" for c in txt.columns]
     h = f[f["side"] == "home"].set_index("game_id")[cols].add_prefix("h_")
     a = f[f["side"] == "away"].set_index("game_id")[cols].add_prefix("a_")
-    g = sched[["game_id", "roof", "temp", "wind"]].set_index("game_id").join(h).join(a).reset_index()
+    g = sched[["game_id", "roof", "temp", "wind"]].set_index("game_id").join(h).join(a).join(txt).reset_index()
     g["dome"] = g["roof"].isin(["dome", "closed"]).astype(float)
     g["wind_out"] = np.where(g["dome"] == 1, 0.0, g["wind"].fillna(8.0))
     g["cold_out"] = np.where(g["dome"] == 1, 0.0, (g["temp"].fillna(55.0) < 40).astype(float))

@@ -27,6 +27,8 @@ OUT = ROOT / "web" / "data" / "picks.json"
 
 BACKTEST = (2012, 2025)
 SIGMA = 13.5  # points; maps a margin to a win probability for the market line
+BEST_BET_EDGE = 2.0  # ATS picks with at least this many points of edge are flagged as best bets
+ERAS = [(2007, 2011), (2012, 2017), (2018, 2025)]
 
 # Every model shown on the site. The ensemble (stacked meta-model) comes first and makes the picks.
 MODELS = [
@@ -112,7 +114,8 @@ def load_preds(sched: pl.DataFrame) -> dict[str, pl.DataFrame]:
         if not f.exists():
             continue
         d = pl.read_csv(f)
-        cols = ["game_id", "p_home", "margin"] + (["p_home_cover"] if "p_home_cover" in d.columns else [])
+        extra = ["p_home_cover", "ats_edge", "best_bet", "p_stack"] if mid == "ensemble" else ["p_home_cover"]
+        cols = ["game_id", "p_home", "margin"] + [c for c in extra if c in d.columns]
         out[mid] = d.select(cols).unique("game_id", keep="last")
     return out
 
@@ -184,11 +187,26 @@ def backtest(sched: pl.DataFrame, preds: dict[str, pl.DataFrame]) -> dict:
         ats["p_home_cover"].to_list() if "p_home_cover" in ats.columns else [None] * ats.height,
         ats["margin"].to_list(), ats["spread_line"].to_list())])
     cover = ((ats["result"] - ats["spread_line"]) > 0).to_numpy()
-    edge = np.abs(norm.ppf(np.clip(pc, 1e-4, 1 - 1e-4)) * SIGMA)
+    edge = (np.abs(ats["ats_edge"].to_numpy()) if "ats_edge" in ats.columns
+            else np.abs(norm.ppf(np.clip(pc, 1e-4, 1 - 1e-4)) * SIGMA))
     ats_right = (pc >= 0.5) == cover
     ats_by_edge = [{"min_edge": t, "acc": r(ats_right[edge >= t].mean()), "n": int((edge >= t).sum())}
                    for t in (0, 0.5, 1, 1.5, 2, 3, 4) if (edge >= t).sum() >= 20]
-
+    # Best bets: ATS edge >= BEST_BET_EDGE, by era (2018-2025 is the meta-model's untouched holdout).
+    best = []
+    allg = sched.filter(pl.col("result").is_not_null() & pl.col("spread_line").is_not_null()).select(
+        "game_id", "season", "result", "spread_line").join(ens, on="game_id")
+    allg = allg.filter((pl.col("result") - pl.col("spread_line")) != 0)
+    if "ats_edge" in allg.columns:
+        right_all = ((allg["result"] - allg["spread_line"]) > 0).to_numpy() == (allg["p_home_cover"].to_numpy() >= 0.5)
+        e_all = np.abs(allg["ats_edge"].to_numpy())
+        ss = allg["season"].to_numpy()
+        for a, b in ERAS + [(ERAS[1][0], ERAS[-1][1])]:
+            m = (ss >= a) & (ss <= b) & (e_all >= BEST_BET_EDGE)
+            if m.sum():
+                best.append({"window": f"{a}-{b}", "acc": r(right_all[m].mean()), "n": int(m.sum()),
+                             "w": int(right_all[m].sum()), "l": int((~right_all[m]).sum()),
+                             "holdout": a == 2018})
     # Season-level summary of the market favourite for the headline.
     return {
         "window": f"{lo}-{hi}",
@@ -198,6 +216,8 @@ def backtest(sched: pl.DataFrame, preds: dict[str, pl.DataFrame]) -> dict:
         "calibration": calibration,
         "by_confidence": by_conf,
         "ats_by_edge": ats_by_edge,
+        "best_bets": best,
+        "best_bet_edge": BEST_BET_EDGE,
     }
 
 
@@ -295,12 +315,14 @@ def build() -> dict:
         su = {"pick": home if pick_home else away, "prob": r(p_home if pick_home else 1 - p_home, 3),
               "margin": r(e["margin"], 1),
               "market_prob": r((p_mkt if pick_home else 1 - p_mkt), 3) if p_mkt is not None else None,
-              "correct": su_correct}
+              "correct": su_correct,
+              "stack_prob": r(e.get("p_stack") if pick_home else 1 - e.get("p_stack"), 3) if e.get("p_stack") is not None else None}
         ats = None
         if line is not None:
             pc = ats_prob(e.get("p_home_cover"), e["margin"], line)
             cover_home = pc >= 0.5
-            edge = abs(float(norm.ppf(min(max(pc, 1e-4), 1 - 1e-4))) * SIGMA)
+            raw = e.get("ats_edge")
+            edge = abs(float(raw)) if raw is not None else abs(float(norm.ppf(min(max(pc, 1e-4), 1 - 1e-4))) * SIGMA)
             correct = None
             if played:
                 diff = row["result"] - line
@@ -310,7 +332,8 @@ def build() -> dict:
                 else:
                     rec["ats"]["p"] += 1
             ats = {"pick": home if cover_home else away, "line": r(-line if cover_home else line, 1),
-                   "prob": r(pc if cover_home else 1 - pc, 3), "edge": r(edge, 1), "correct": correct}
+                   "prob": r(pc if cover_home else 1 - pc, 3), "edge": r(edge, 1), "correct": correct,
+                   "best_bet": edge >= BEST_BET_EDGE}
         models = {m: {"p_home": r(v[gid]["p_home"], 3), "margin": r(v[gid]["margin"], 1)}
                   for m, v in by_model.items() if gid in v}
         others = [v["p_home"] >= 0.5 for m, v in models.items() if m != "ensemble"]
@@ -361,8 +384,19 @@ def build() -> dict:
     }
 
 
+def clean(x):
+    """Replace NaN/inf (e.g. from the meta-model's tables) with null so the JSON stays valid."""
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if isinstance(x, dict):
+        return {k: clean(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [clean(v) for v in x]
+    return x
+
+
 def main() -> None:
-    data = build()
+    data = clean(build())
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(data, separators=(",", ":"), allow_nan=False) + "\n")
     lb = {x["id"]: x for x in data["backtest"]["leaderboard"]}

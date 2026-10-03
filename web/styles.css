@@ -508,3 +508,20 @@ html:has(dialog[open]) { overflow: hidden; }
   .res-pair { flex-direction: column; align-items: flex-start; gap: 3px; }
   .st .pk { gap: 4px; }
 }
+
+/* ensemble internals */
+.listen .lsub { margin: 14px 0 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-2); }
+.listen .lsub:first-child { margin-top: 2px; }
+.listen .lsub .muted { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.lrow { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 52px; align-items: center; gap: 10px; padding: 4px 0; font-size: 12.5px; }
+.lrow .ln { color: var(--ink); overflow-wrap: anywhere; }
+.lrow .lv { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12px; }
+.ltrack { position: relative; height: 10px; border-radius: 99px; background: var(--line); }
+.ltrack .lmid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--ink-3); }
+.ltrack .lbar { position: absolute; top: 0; bottom: 0; border-radius: 99px; background: var(--series-1); }
+.ltrack .lbar.neg { background: var(--series-2); }
+table.dissent td small { color: var(--ink-3); font-size: 10.5px; margin-left: 2px; }
+td.win { color: var(--good, #15803d); font-weight: 700; }
+td.lose { color: var(--bad, #b91c1c); font-weight: 700; }
+.pick .bb { margin-left: 6px; padding: 1px 7px; border-radius: 99px; background: var(--accent); color: #fff; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 800; vertical-align: 1px; }
+.pick.ats.best { box-shadow: inset 0 0 0 1.5px var(--accent); }

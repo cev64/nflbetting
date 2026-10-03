@@ -239,8 +239,9 @@ function atsBlock(g, big = false) {
   const sub = big
     ? `Covers ${pct(a.prob)} · line ${esc(spreadText(g) || "—")}`
     : `Covers <b>${pct(a.prob)}</b> · ${isNum(a.edge) ? `edge ${Math.abs(a.edge).toFixed(1)}` : ""}`;
-  return `<div class="pick ats">
-    <div class="pick-lbl"><span>Spread</span>${badge(atsResult(g), "Spread")}</div>
+  const bb = a.best_bet ? `<span class="bb" title="Edge of ${esc(String(D.backtest?.best_bet_edge ?? 2))}+ points: the ensemble's strongest spread leans">Best bet</span>` : "";
+  return `<div class="pick ats${a.best_bet ? " best" : ""}">
+    <div class="pick-lbl"><span>Spread${bb}</span>${badge(atsResult(g), "Spread")}</div>
     <div class="pick-main">${logo(a.pick, "sm", 22)}<b>${esc(a.pick)} ${fmtLine(a.line)}</b><span class="big" title="Edge: model margin vs the line">${isNum(a.edge) ? signed(Math.abs(a.edge)) : ""}<small>${isNum(a.edge) ? "pts" : ""}</small></span></div>
     ${probBar(a.prob)}
     <div class="pick-sub">${sub}</div>
@@ -571,6 +572,9 @@ function renderModels() {
   const { e, m, window: win } = btHeadline();
   const base = D.models.filter((x) => x.id !== PRIMARY);
   $("#stack-lede").innerHTML = `Every pick comes from a <b>stacked ensemble</b> of ${base.length} models${e ? `. In a walk-forward backtest over ${esc(win)} it picked <b>${pct(e.su_acc, 1)}</b> of winners${m ? ` (the betting favorite: ${pct(m.su_acc, 1)})` : ""} and went <b>${pct(e.ats_acc, 1)}</b> against the spread` : ""}.`;
+  if (D.ensemble?.design?.su?.design === "guard") {
+    $("#stack-note").innerHTML = `Each model estimates the chance the home team wins and the expected margin. The ensemble learns, only from seasons it never trained on, how much to trust the betting market and each family of models: the models "talking to each other". <b>What it learned:</b> when a model picks against the betting favorite, the favorite usually wins (table below). So the winner pick stays with the favorite. The models adjust the win probability and drive the spread pick, which is where they disagree with the line usefully.`;
+  }
   $("#stack-diagram").innerHTML = `
     <div class="stack-models">${base.map((x) => `<span class="chip" title="${esc(x.description || "")}">${esc(mshort(x.id))}</span>`).join("")}</div>
     <div class="stack-arrow" aria-hidden="true"><svg width="22" height="12" viewBox="0 0 22 12"><path d="M1 6h18M15 1.5 19.5 6 15 10.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -611,6 +615,7 @@ function renderModels() {
   // model list
   $("#model-list").innerHTML = D.models.map((x) => `<div class="model-item ${x.id === PRIMARY ? "ens" : x.id === "market" ? "mkt" : ""}"><i aria-hidden="true"></i><div><b>${esc(x.name || x.id)}</b>${x.family ? ` <span class="muted" style="font-size:11.5px">${esc(x.family)}</span>` : ""}<p>${esc(x.description || "")}</p></div></div>`).join("");
 
+  renderEnsembleInternals();
   registerChart($("#season-chart"), drawSeasonChart);
   registerChart($("#conf-chart"), (el) => barChart(el, bt.by_confidence || [], {
     label: (r) => `${Math.round(r.min_prob * 100)}%+`, val: (r) => r.acc, tip: (r) => `<div class="tt-t">Win prob ≥ ${pct(r.min_prob)}</div><div class="tt-r"><span>Correct</span><b>${pct(r.acc, 1)}</b></div><div class="tt-r"><span>Games</span><b>${isNum(r.n) ? r.n.toLocaleString() : "—"}</b></div>`,
@@ -621,6 +626,48 @@ function renderModels() {
     base: 0.45, ref: BREAK_EVEN, refLabel: "52.4%", color: "var(--series-1)", xTitle: "edge, points",
   }));
   registerChart($("#cal-chart"), (el) => calChart(el, bt.calibration || []));
+}
+
+const FAMILY_LABEL = {
+  efficiency: "Efficiency models (no line)", efficiency_mkt: "Efficiency + line", personnel: "Lineup model (no line)",
+  personnel_mkt: "QB & injuries + line", ratings: "Rating models (no line)", ratings_mkt: "Ratings + line",
+  situational: "Situational, neural net, similar games", market: "Market",
+};
+const ATS_LABEL = {
+  home_dog: "Home underdog", spread: "Size of the spread", playoff_dog_home: "Playoff home underdog",
+  inj_gap: "Starters-out gap (injuries)", c_efficiency: "Efficiency models' cover lean",
+  c_efficiency_mkt: "Efficiency + line cover lean", c_personnel: "Lineup model's cover lean",
+  c_personnel_mkt: "QB & injuries cover lean", c_ratings: "Rating models' cover lean",
+  c_ratings_mkt: "Ratings + line cover lean", c_situational: "Situational models' cover lean",
+};
+
+function renderEnsembleInternals() {
+  const E = D.ensemble || {};
+  const su = (E.su_weights || []).filter((w) => isNum(w.influence));
+  const ats = (E.ats_weights || []).filter((w) => isNum(w.influence));
+  const all = [...su, ...ats].map((w) => Math.abs(w.influence));
+  const max = Math.max(0.01, ...all);
+  const bars = (rows, lab) => rows.sort((a, b) => Math.abs(b.influence) - Math.abs(a.influence)).map((w) => {
+    const v = w.influence, wid = (Math.abs(v) / max) * 50;
+    const title = w.models ? `Models: ${w.models.join(", ")}` : "";
+    return `<div class="lrow" title="${esc(title)}"><span class="ln">${esc(lab(w))}</span><div class="ltrack"><i class="lmid"></i><i class="lbar ${v < 0 ? "neg" : ""}" style="${v < 0 ? `right:50%` : `left:50%`};width:${wid}%"></i></div><span class="lv">${signed(v, 3)}</span></div>`;
+  }).join("");
+  $("#listen").innerHTML = su.length || ats.length ? `
+    <p class="lsub">Who wins <span class="muted">· weight on each family's disagreement with the market</span></p>${bars(su, (w) => FAMILY_LABEL[w.family] || w.family)}
+    <p class="lsub">Against the spread <span class="muted">· positive = leans to the home side</span></p>${bars(ats, (w) => ATS_LABEL[w.input] || w.input)}
+    ${E.design?.su?.summary ? `<p class="note">${esc(E.design.su.summary)}</p>` : ""}` : `<div class="empty">No ensemble weights yet.</div>`;
+
+  const ctx = E.context || [];
+  const fams = ["ratings", "efficiency", "personnel"];
+  const fl = { ratings: "Ratings", efficiency: "Efficiency", personnel: "Lineup" };
+  const dcell = (acc, n) => isNum(acc) && n ? `<td class="num ${acc < 0.5 ? "lose" : "win"}">${pct(acc)}<small> of ${n}</small></td>` : `<td class="num muted">—</td>`;
+  $("#dissent").innerHTML = ctx.length ? `<thead><tr><th>Spread</th><th class="num">Games</th><th class="num">Favorite won</th>${fams.map((f) => `<th class="num">${fl[f]} dissent</th>`).join("")}</tr></thead><tbody>${
+    ctx.map((c) => `<tr><td>${esc(c.spread_bucket)}</td><td class="num">${c.n}</td><td class="num">${pct(c.market_acc)}</td>${fams.map((f) => dcell(c[f + "_dissent_acc"], c[f + "_dissent_n"])).join("")}</tr>`).join("")}</tbody>` : "";
+
+  const bt = D.backtest || {}, bbs = bt.best_bets || [];
+  $("#bb-sub").innerHTML = `A spread pick is a <b>best bet</b> when the ensemble's edge over the line is at least <b>${bt.best_bet_edge ?? 2} points</b>. That's rare: a handful of games a season. Its record by era is below. 2018–2025 is a true holdout: the ensemble's design was frozen before those seasons were scored. Break-even at −110 is 52.4%. Samples are small, so treat this as a lean, not a lock.`;
+  $("#bestbets").innerHTML = bbs.length ? `<thead><tr><th>Seasons</th><th class="num">Record</th><th class="num">Cover rate</th><th class="num">Games</th></tr></thead><tbody>${
+    bbs.map((b) => `<tr class="${b.holdout ? "primary" : ""}"><td>${esc(b.window)}${b.holdout ? '<span class="tag ens">Holdout</span>' : ""}</td><td class="num">${b.w}-${b.l}</td><td class="num ${b.acc >= BREAK_EVEN ? "win" : "lose"}">${pct(b.acc, 1)}</td><td class="num">${b.n}</td></tr>`).join("")}</tbody>` : "";
 }
 
 /* ------------------------------------------------------------------ charts */

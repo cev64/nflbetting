@@ -1,0 +1,49 @@
+cfg,n,su,ll,close_su,pickem_su
+spread favourite (eval baseline),2398,0.6685,0.64525,0.5687,0.5161
+raw no-vig ML (0.5 if missing),2398,0.6689,0.60792,0.5714,0.5282
+kernel+mldiff bw=0.5 sigT=False,2398,0.6676,0.60785,0.5678,0.5121
+kernel+mldiff bw=0.5 sigT=True,2398,0.6681,0.60978,0.5678,0.5121
+kernel+mldiff bw=1.0 sigT=False,2398,0.6681,0.60816,0.5678,0.5121
+kernel+mldiff bw=1.0 sigT=True,2398,0.6681,0.60886,0.5678,0.5121
+kernel+mldiff bw=1.5 sigT=False,2398,0.6681,0.60812,0.5678,0.5121
+kernel+mldiff bw=1.5 sigT=True,2398,0.6681,0.60842,0.5678,0.5121
+kernel+mldiff bw=2.5 sigT=False,2398,0.666,0.60795,0.5633,0.4919
+kernel+mldiff bw=2.5 sigT=True,2398,0.6672,0.60805,0.566,0.504
+normal from1999,2398,0.6681,0.60726,0.5678,0.5121
+normal_tot from1999,2398,0.6681,0.6079,0.5678,0.5121
+normal+tot_c from1999,2398,0.6681,0.60739,0.5678,0.5121
+kernel from1999,2398,0.6681,0.60807,0.5678,0.5121
+normal+juice from1999,2398,0.6685,0.60717,0.5687,0.5161
+normal+juiceclose from1999,2398,0.6685,0.60718,0.5687,0.5161
+normal+neutral from1999,2398,0.6672,0.60724,0.566,0.5081
+normal from2006,2398,0.6681,0.60746,0.5678,0.5121
+normal_tot from2006,2398,0.6681,0.60802,0.5678,0.5121
+normal+tot_c from2006,2398,0.6672,0.60757,0.566,0.504
+kernel from2006,2398,0.6676,0.60826,0.5678,0.5121
+ml_or_normal from2006,2398,0.6681,0.6078,0.5678,0.5121
+normal+mldiff from2006,2398,0.6681,0.60756,0.5678,0.5121
+normal+juice from2006,2398,0.6681,0.60743,0.5678,0.5121
+normal+juiceclose from2006,2398,0.6685,0.60741,0.5687,0.5161
+normal+mldiff+juice from2006,2398,0.6681,0.60741,0.5678,0.5121
+normal+neutral from2006,2398,0.6676,0.60756,0.5642,0.5081
+ml_x_tot from2006,2398,0.6676,0.60804,0.5669,0.5081
+l_normal hl=None from1999,2398,0.6681,0.60726,0.5678,0.5121
+l_normal+l_cov_juice hl=None from1999,2398,0.6685,0.60717,0.5687,0.5161
+l_ml_or_normal+has_ml hl=None from2006,2398,0.6681,0.6078,0.5678,0.5121
+l_normal+l_ml_minus_normal+l_cov_juice hl=None from2006,2398,0.6681,0.60741,0.5678,0.5121
+l_normal hl=10 from1999,2398,0.6681,0.60711,0.5678,0.5121
+l_normal+l_cov_juice hl=10 from1999,2398,0.6685,0.60702,0.5687,0.5161
+l_ml_or_normal+has_ml hl=10 from2006,2398,0.6672,0.6077,0.566,0.504
+l_normal+l_ml_minus_normal+l_cov_juice hl=10 from2006,2398,0.6681,0.60724,0.5678,0.5121
+l_normal hl=6 from1999,2398,0.6681,0.60706,0.5678,0.5121
+l_normal+l_cov_juice hl=6 from1999,2398,0.6685,0.60695,0.5687,0.5161
+l_ml_or_normal+has_ml hl=6 from2006,2398,0.6664,0.60765,0.5642,0.496
+l_normal+l_ml_minus_normal+l_cov_juice hl=6 from2006,2398,0.6681,0.60715,0.5678,0.5121
+l_normal hl=4 from1999,2398,0.6681,0.60702,0.5678,0.5121
+l_normal+l_cov_juice hl=4 from1999,2398,0.6685,0.6069,0.5687,0.5161
+l_ml_or_normal+has_ml hl=4 from2006,2398,0.6664,0.6076,0.5642,0.496
+l_normal+l_ml_minus_normal+l_cov_juice hl=4 from2006,2398,0.6681,0.60707,0.5678,0.5121
+l_normal hl=2 from1999,2398,0.6681,0.60703,0.5678,0.5121
+l_normal+l_cov_juice hl=2 from1999,2398,0.6685,0.60687,0.5687,0.5161
+l_ml_or_normal+has_ml hl=2 from2006,2398,0.6664,0.60757,0.5642,0.496
+l_normal+l_ml_minus_normal+l_cov_juice hl=2 from2006,2398,0.6681,0.607,0.5678,0.5121
