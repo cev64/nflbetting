@@ -208,6 +208,17 @@ def _mlp_fit_predict(tr: pd.DataFrame, te: pd.DataFrame, cols, cfg, seeds):
     return np.mean(preds, axis=0)
 
 
+PRIOR_COLS = ["spread_line", "home_dog", "ang_road_dog", "total_line_f"]
+
+
+def cover_prior(tr: pd.DataFrame, te: pd.DataFrame) -> np.ndarray:
+    """Heavily-regularised logistic model of P(home covers) on spread structure only (fav/dog/home bias)."""
+    trc = tr[tr["home_cover"].notna()]
+    sc = StandardScaler().fit(design(trc, PRIOR_COLS))
+    w = fit_plogit(sc.transform(design(trc, PRIOR_COLS)), trc["home_cover"].to_numpy(), np.zeros(len(trc)), 300.0)
+    return pred_plogit(w, sc.transform(design(te, PRIOR_COLS)), np.zeros(len(te)))
+
+
 def _shrink(pred, y):
     """Least-squares slope of y on pred through the origin, clipped to [0, 1] (0 = trust the market)."""
     v = float(pred @ pred)
@@ -219,6 +230,8 @@ def run_mlp(g: pd.DataFrame, test_seasons, cfg=None, cols=None, seeds=None, n_in
     trust each output (shrinkage toward the market); (2) fit on all seasons < S and predict S with that shrinkage."""
     cfg, cols, seeds = cfg or MLP_CFG, cols or MLP_COLS, seeds or MLP_SEEDS
     out, info = [], {}
+    if "ang_road_dog" not in g:
+        g, _ = add_angle_columns(g)
     base = g[(g["season"] >= FIRST_TRAIN) & g["result"].notna() & g["spread_line"].notna()]
     for S in test_seasons:
         tr = base[base["season"] < S]
@@ -231,9 +244,10 @@ def run_mlp(g: pd.DataFrame, test_seasons, cfg=None, cols=None, seeds=None, n_in
         k_cov = _shrink(ip[:, 1], (iva["resid"].clip(-35, 35) / RESID_SD).to_numpy())
         pr = _mlp_fit_predict(tr, te, cols, cfg, seeds)
         p_home = np.clip(te["mkt_prob"].to_numpy() + k_win * WIN_SD * pr[:, 0], 0.01, 0.99)
-        resid_hat = k_cov * RESID_SD * pr[:, 1]
-        # keep a non-degenerate cover probability even when shrinkage is 0: fall back to raw net with tiny weight
-        p_cover = norm.cdf((resid_hat + 1e-3 * RESID_SD * pr[:, 1]) / RESID_SD)
+        # ATS = market-structure prior (favourite/underdog bias learnt on the training window) + shrunk net residual
+        prior = cover_prior(tr, te)
+        resid_hat = norm.ppf(prior) * RESID_SD + k_cov * RESID_SD * pr[:, 1]
+        p_cover = norm.cdf(resid_hat / RESID_SD)
         info[S] = dict(k_win=k_win, k_cov=k_cov)
         log(f"  mlp {S}: k_win={k_win:.2f} k_cov={k_cov:.2f}")
         out.append(pd.DataFrame({"game_id": te["game_id"].values, "season": S, "week": te["week"].values,
