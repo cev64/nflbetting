@@ -97,10 +97,12 @@ def choose_alpha(tr: pl.DataFrame, feats: list[str], target: str, intercept: boo
         err = []
         for vs in seasons[-3:]:
             a, b = tr.filter(pl.col("season") < vs), tr.filter(pl.col("season") == vs)
+            if a.height < 300:
+                continue
             sc = Std().fit(_xy(a, feats))
             m = Ridge(alpha=A, fit_intercept=intercept).fit(sc(_xy(a, feats)), a[target].to_numpy())
             err.append(np.mean((m.predict(sc(_xy(b, feats))) - b[target].to_numpy()) ** 2))
-        v = float(np.mean(err))
+        v = float(np.mean(err)) if err else 1e18
         if v < best - 1e-9:
             best, bestA = v, A
     return bestA

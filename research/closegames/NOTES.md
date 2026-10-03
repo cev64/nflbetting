@@ -28,7 +28,7 @@ python research/closegames/run.py [--check-leakage]   # ~12 s (~25 s with the le
 | `closegames/dev_market.py`, `dev_close.py` | **Dev-phase** selection scripts. They load seasons ≤ 2017 only (asserted). Grids are in `out/dev_*_grid*.csv` |
 | `closegames/out/` | `eval_output.txt` (eval.py), `eval_dev_holdout.csv`, `ceiling_by_season.csv`, `microstructure.csv`, `specialist_coefs.csv` |
 
-The preds files cover **2006-2026**: 5,510 rows, every game with a spread_line, including the 31 unplayed 2026
+The preds files cover **2006-2026**: 5,510 rows, every game with a spread_line, including the 30 unplayed 2026
 week 4-5 games. Fallbacks:
 * The specialist needs 3 training seasons from 2006, so 2006-2008 close games use the market model.
 * A missing moneyline or juice falls back to the spread (the juice term is 0).
@@ -70,8 +70,8 @@ week 4-5 games. Fallbacks:
 * **Bad moneyline.** One book has a negative overround: 2020_01_LV_CAR, +134/-124. Its moneyline is dropped.
 * **No spread sign errors.** No game has a moneyline favourite opposite to a spread of 2.5 or more. 43 games have
   the moneyline side differing from the spread side, all at |spread| ≤ 1.
-* **Spread juice is informative about the price but not the outcome.** Juice varies a lot: only 4-6% of
-  pre-2022 games are at -110/-110, and 16-37% of games after 2022.
+* **Spread juice is informative about the price but not the outcome.** Juice varies a lot: almost no game
+  through 2022 is at -110/-110 (0%, except 5% in 2021), against 16-37% of games from 2023 on.
   * The raw no-vig juice-implied cover probability picks covers **49.8%** (dev 2009-17).
   * As a feature it improves win-prob logloss by only about 0.0001.
 
@@ -88,8 +88,8 @@ week 4-5 games. Fallbacks:
 
 * **Pick'em games are coin flips.** When the moneyline disagrees with a ±1 spread, it is a ~1-cent disagreement
   and it is right about half the time.
-* **The 2018-25 ±1 favourite won only 44%** (n=144). That is a 1.3-SE fluke in the "wrong" direction, not
-  something a model could have known.
+* **The 2018-25 ±1 favourite won only 44%** (n=144). That is about 2 SE below the ~52-53% the prices implied,
+  and no pre-game market signal (moneyline, juice) anticipated it.
 * **Moneyline vs spread as a probability source** (dev 2009-17 logloss): raw no-vig moneyline 0.6079, while a
   recalibrated spread scores 0.6071-0.6073. Adding the moneyline's deviation from the spread does not help
   (0.6074-0.6076). The nflverse moneyline is a slightly *worse* probability source than the closing spread.
@@ -138,7 +138,7 @@ on the standardised feature (HC1 t-stats):
 
 **What a wave-1 model does in close games** (dev 2006-2017, close games). The market favourite wins 56.7%.
 * Pure models disagree with the market in about 25% of close games. They pick only 52.7-55.8% correctly.
-* Market-inclusive models score 55.6-56.8%.
+* Market-inclusive models score 54.4-56.8% (gbm is the low one).
 * So on its own, no base model knows more than the line in close games.
 
 **Walk-forward dev grid** (close games 2010-2017, n=1,014; market 57.20% / ll 0.67860). Full grid:
@@ -261,7 +261,8 @@ most a tiny stacking weight. Use `wave2_market` as the market input.
   getting there. A 68% headline over 2012-2025 would therefore be strong evidence of real edge, or of leakage.
 * **Close games cap everything.** The market's own expected accuracy in |spread| ≤ 3.5 games is only 58-59%, and
   those games are 41-54% of each season.
-  * Reaching 68% overall needs close games at about 61-62%, while the market *expects* 58.5%.
+  * Over 2012-25, the 2,007 non-close games went 75.0% for the market. Holding those fixed, 68% overall needs
+    close games at about **60.2%** (1,089 of 1,809). The market *expects* 58.5% there and actually got 56.9%.
   * That means beating the closing line's own probability by 3 points, on the games where it is least certain.
 * **Information needed** (normal-margin approximation, σ calibrated so that a zero-information model reproduces
   the market's 66.7%; σ_eff = 11.6 pts, raw residual SD 12.9):
@@ -270,7 +271,7 @@ most a tiny stacking weight. Use `wave2_market` as the market input.
   * For comparison, the wave-1 pure models carry roughly 0-0.5 point of independent signal (their t-stats
     beyond the spread are ≤ 2, and about 0 since 2018).
   * Public box-score information is essentially fully priced. A 3-point information edge over the close would
-    be a very large betting edge: it would also give roughly 55%+ ATS.
+    be a very large betting edge: it would also give roughly 57% ATS (0.5 + arcsin(3/12.9)/π).
 
 ## 5. Factors (`wave2_close_factors.parquet`)
 Rows by importance for this family. The first five carry essentially all of the prediction; the rest are
