@@ -1,0 +1,22 @@
+{
+ "models": [
+  "elo",
+  "elo_mkt",
+  "gbm",
+  "kalman",
+  "kalman_mkt",
+  "knn",
+  "logit_epa",
+  "logit_epa_mkt",
+  "mlp",
+  "personnel",
+  "personnel_ats",
+  "personnel_nomkt",
+  "ratings_combo",
+  "ratings_combo_mkt",
+  "ratings_ridge",
+  "ratings_ridge_mkt",
+  "situational",
+  "xgb_margin"
+ ]
+}

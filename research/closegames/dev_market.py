@@ -3,6 +3,8 @@ from __future__ import annotations
 import itertools
 import numpy as np
 import pandas as pd
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2"); os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
 from market import load_schedule, market_walk_forward, logit
 
 DEV_MAX = 2017
@@ -31,21 +33,9 @@ if __name__ == "__main__":
     r2 = ref.copy(); r2["p_home"] = d.loc[ref.index, "p_ml"].fillna(0.5).values
     rows.append(score(r2, d, "raw no-vig ML (0.5 if missing)"))
     base = dict(bw=1.0, C=1.0, sigma_total=False)
-    sets = {
-        "normal": ("l_normal",),
-        "kernel": ("l_kernel",),
-        "ml_or_kernel": ("l_ml_or_kernel", "has_ml"),
-        "kernel+mldiff": ("l_kernel", "l_ml_minus_kernel"),
-        "kernel+mldiff+juice": ("l_kernel", "l_ml_minus_kernel", "l_cov_juice"),
-        "kernel+mldiff+juiceclose": ("l_kernel", "l_ml_minus_kernel", "l_cov_juice_close"),
-        "kernel+mldiff+tot": ("l_kernel", "l_ml_minus_kernel", "tot_c", "l_ml_x_tot"),
-        "kernel+mldiff+neutral": ("l_kernel", "l_ml_minus_kernel", "neutral"),
-        "all": ("l_kernel", "l_ml_minus_kernel", "l_cov_juice", "tot_c", "l_ml_x_tot", "neutral"),
-    }
-    for name, fs in sets.items():
-        cfg = dict(base, features=fs)
-        rows.append(score(market_walk_forward(d, TEST, cfg), d, name))
-    for bw, st in itertools.product([0.5, 1.0, 1.5, 2.5], [False, True]):
-        cfg = dict(base, bw=bw, sigma_total=st, features=("l_kernel", "l_ml_minus_kernel"))
-        rows.append(score(market_walk_forward(d, TEST, cfg), d, f"kernel+mldiff bw={bw} sigT={st}"))
+    for hl in [None, 10, 6, 4, 2]:
+        for fs in [("l_normal",), ("l_normal", "l_cov_juice"), ("l_ml_or_normal", "has_ml"), ("l_normal", "l_ml_minus_normal", "l_cov_juice")]:
+            tf = 2006 if any("ml" in x for x in fs) else 1999
+            cfg = dict(base, features=fs, half_life=hl)
+            rows.append(score(market_walk_forward(d, TEST, cfg, train_from=tf), d, f"{'+'.join(fs)} hl={hl} from{tf}"))
     print(pd.DataFrame(rows).to_string())

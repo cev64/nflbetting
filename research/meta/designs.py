@@ -10,7 +10,6 @@ from sklearn.linear_model import LogisticRegression
 from data import NO_MARKET, family, logit, su_resid, cover_signal
 
 CTX = ["pickem", "early", "late", "playoff"]
-MKT_SCALE = 10.0  # market column multiplied so the L2 penalty barely touches it
 
 
 def sample_weight(seasons: np.ndarray, test_season: int, half_life: float | None) -> np.ndarray:
@@ -23,6 +22,46 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 
+class PenLogit:
+    """Logistic regression where only some columns are L2-penalised (intercept + `free` columns are not).
+    Objective: mean weighted log-loss + 0.5 * alpha * ||beta_penalised||^2 (alpha is per-sample)."""
+
+    def __init__(self, alpha=0.01, free=(), intercept=True):
+        self.alpha, self.free, self.intercept = alpha, set(free), intercept
+
+    def fit(self, X: pd.DataFrame, y, w=None):
+        from scipy.optimize import minimize
+        self.cols = list(X.columns)
+        A = X.to_numpy(float)
+        if self.intercept:
+            A = np.column_stack([np.ones(len(A)), A])
+        y = np.asarray(y, float)
+        w = np.ones(len(y)) if w is None else np.asarray(w, float)
+        w = w / w.sum()
+        pen = np.array(([0.0] if self.intercept else []) + [0.0 if c in self.free else 1.0 for c in self.cols])
+        def f(b):
+            z = A @ b
+            ll = np.logaddexp(0, z) - y * z
+            r = sigmoid(z) - y
+            return (w * ll).sum() + 0.5 * self.alpha * (pen * b * b).sum(), A.T @ (w * r) + self.alpha * pen * b
+        b0 = np.zeros(A.shape[1])
+        self.b = minimize(f, b0, jac=True, method="L-BFGS-B", options={"maxiter": 5000}).x
+        return self
+
+    def decision(self, X: pd.DataFrame):
+        A = X[self.cols].to_numpy(float)
+        if self.intercept:
+            A = np.column_stack([np.ones(len(A)), A])
+        return A @ self.b
+
+    def predict(self, X):
+        return sigmoid(self.decision(X))
+
+    def coefs(self):
+        names = (["intercept"] if self.intercept else []) + self.cols
+        return dict(zip(names, np.round(self.b, 4).tolist()))
+
+
 # ---------------------------------------------------------------- SU feature builders
 def fam_resids(g: pd.DataFrame, models: list[str]) -> pd.DataFrame:
     fams: dict[str, list[np.ndarray]] = {}
@@ -32,7 +71,7 @@ def fam_resids(g: pd.DataFrame, models: list[str]) -> pd.DataFrame:
 
 
 def su_matrix(g, models, cfg):
-    cols = {"mkt": g["l_mkt"].to_numpy() / MKT_SCALE}
+    cols = {"mkt": g["l_mkt"].to_numpy()}
     if cfg.get("ml"):
         cols["ml_gap"] = g["ml_gap"].to_numpy()
     if cfg.get("by") == "family":
@@ -45,7 +84,7 @@ def su_matrix(g, models, cfg):
         for k in CTX:
             z = g[k].to_numpy()
             cols[f"{k}"] = z
-            cols[f"mkt_x_{k}"] = cols["mkt"] * z
+            cols[f"mkt_x_{k}"] = cols["mkt"] * z  # penalised: context-specific market recalibration
             for c in R.columns:
                 cols[f"{c}_x_{k}"] = R[c].to_numpy() * z
     if cfg.get("dis"):
@@ -71,9 +110,8 @@ def su_logit(tr, models, cfg, S):
     """L2 logistic stack. cfg: C, by ('model'|'family'), ctx (interactions), dis, ml, hl."""
     w = sample_weight(tr.season.values, S, cfg.get("hl"))
     X = su_matrix(tr, models, cfg)
-    clf = LogisticRegression(C=cfg.get("C", 0.1), max_iter=5000).fit(X.to_numpy(), tr.home_win, sample_weight=w)
-    info = {"features": list(X.columns), "coef": clf.coef_[0].tolist(), "intercept": float(clf.intercept_[0])}
-    return lambda te: clf.predict_proba(su_matrix(te, models, cfg).to_numpy())[:, 1], info
+    clf = PenLogit(alpha=cfg.get("alpha", 0.01), free=["mkt"]).fit(X, tr.home_win, w)
+    return lambda te: clf.predict(su_matrix(te, models, cfg)), {"coef": clf.coefs()}
 
 
 def su_lgbm(tr, models, cfg, S):
@@ -199,10 +237,8 @@ def ats_logit(tr, models, cfg, S):
     X = ats_matrix(tr, models, cfg)
     if X.shape[1] == 0:
         return lambda te: np.full(len(te), 0.5), {}
-    clf = LogisticRegression(C=cfg.get("C", 0.05), max_iter=5000, fit_intercept=cfg.get("intercept", False)
-                             ).fit(X.to_numpy(), tr.home_cover, sample_weight=w)
-    info = {"features": list(X.columns), "coef": clf.coef_[0].tolist()}
-    return lambda te: clf.predict_proba(ats_matrix(te, models, cfg).to_numpy())[:, 1], info
+    clf = PenLogit(alpha=cfg.get("alpha", 0.01), intercept=cfg.get("intercept", False)).fit(X, tr.home_cover, w)
+    return lambda te: clf.predict(ats_matrix(te, models, cfg)), {"coef": clf.coefs()}
 
 
 def ats_lgbm(tr, models, cfg, S):
@@ -232,3 +268,24 @@ def ats_vote(tr, models, cfg, S):
 
 SU_DESIGNS = {"market": su_market, "logit": su_logit, "lgbm": su_lgbm, "bma": su_bma, "router": su_router}
 ATS_DESIGNS = {"logit": ats_logit, "lgbm": ats_lgbm, "vote": ats_vote}
+
+
+def su_guard(tr, models, cfg, S):
+    """Flip guard over any SU design: keep its probability, but it may only pick against the market favorite
+    when it is more than `delta` past 0.5 on the other side; otherwise p is pulled to just inside the market's
+    side (0.5 +/- 0.001). delta=0 is the base design; delta=1 always follows the market's pick."""
+    base_fn = SU_DESIGNS[cfg["base"]]
+    pred, info = base_fn(tr, models, cfg.get("base_cfg", {}), S)
+    delta = cfg.get("delta", 0.0)
+    def out(te):
+        p = np.asarray(pred(te), float)
+        fav_home = te["spread_line"].to_numpy() >= 0
+        against = (p >= 0.5) != fav_home
+        weak = against & (np.abs(p - 0.5) <= delta)
+        p = p.copy()
+        p[weak] = np.where(fav_home[weak], 0.501, 0.499)
+        return p
+    return out, info
+
+
+SU_DESIGNS["guard"] = su_guard

@@ -83,6 +83,15 @@ def load(models: list[str] | None = None, start: int = 2006) -> tuple[pd.DataFra
         d = d.rename(columns={c: f"{m}__{c}" for c in d.columns if c != "game_id"})
         g = g.merge(d, on="game_id", how="left")
         used.append(m)
+    # A base model with no prediction for a game is treated as agreeing with the market (zero residual).
+    p_mkt0 = norm.cdf(g["spread_line"].to_numpy(float) / SD)
+    for m in used:
+        miss = g[f"{m}__p_home"].isna()
+        g[f"{m}__has"] = (~miss).astype(float)
+        g.loc[miss, f"{m}__p_home"] = p_mkt0[miss.to_numpy()]
+        g.loc[g[f"{m}__margin"].isna(), f"{m}__margin"] = g["spread_line"]
+        if f"{m}__p_home_cover" in g.columns:
+            g[f"{m}__p_home_cover"] = g[f"{m}__p_home_cover"].fillna(0.5)
     # personnel's pre-game injury gap (report filed before kickoff; 0 before 2009)
     pg = pl.read_parquet(HERE / "personnel" / "work" / "games.parquet").select(
         "game_id", "d_inj_starters_out", "d_qb_epa").to_pandas()

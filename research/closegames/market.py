@@ -86,11 +86,13 @@ def normal_map(spread: np.ndarray, sigma: float = 13.5) -> np.ndarray:
 
 # ---------------------------------------------------------------- market-only model
 MARKET_CONFIG = dict(
-    # frozen after the dev phase (seasons <= 2017 only); see NOTES.md "Market-only model selection"
+    # frozen after the dev phase (seasons <= 2017 only); see NOTES.md "Market-only model"
     bw=1.0,
-    features=("l_kernel", "l_ml_or_kernel", "has_ml"),
+    features=("l_normal", "l_cov_juice"),
     C=1.0,
     sigma_total=False,
+    half_life=6.0,
+    train_from=1999,
 )
 
 
@@ -107,15 +109,21 @@ def market_features(d: pd.DataFrame, train_mask: np.ndarray, cfg: dict) -> pd.Da
         tr_sp = tr["spread"].values * np.sqrt(44.0 / np.clip(tr_T, 30, 60))
     else:
         sp_eff, tr_sp = sp, tr["spread"].values
-    p_k = kernel_map(tr_sp, tr["result"].values, sp_eff, cfg["bw"])
+    need_k = any("kernel" in x for x in cfg["features"])
+    p_k = kernel_map(tr_sp, tr["result"].values, sp_eff, cfg["bw"]) if need_k else normal_map(sp_eff)
     f["p_kernel"] = p_k
     f["l_kernel"] = logit(p_k)
     f["l_normal"] = logit(normal_map(sp))
+    # total-dependent scale: fewer expected points -> each point of spread is worth more probability
+    T0 = d["total"].fillna(44.0).clip(30, 60).values
+    f["l_normal_tot"] = logit(normal_map(sp * np.sqrt(44.0 / T0)))
     has_ml = d["p_ml"].notna().values
     f["has_ml"] = has_ml.astype(float)
     f["l_ml"] = np.where(has_ml, logit(d["p_ml"].fillna(0.5).values), 0.0)
     f["l_ml_or_kernel"] = np.where(has_ml, f["l_ml"].values, f["l_kernel"].values)
     f["l_ml_minus_kernel"] = np.where(has_ml, f["l_ml"].values - f["l_kernel"].values, 0.0)
+    f["l_ml_minus_normal"] = np.where(has_ml, f["l_ml"].values - f["l_normal"].values, 0.0)
+    f["l_ml_or_normal"] = np.where(has_ml, f["l_ml"].values, f["l_normal"].values)
     pc = d["p_cov_juice"].values
     f["l_cov_juice"] = np.where(np.isfinite(pc), logit(np.nan_to_num(pc, nan=0.5)), 0.0)
     # juice is worth more away from key numbers; scale by the kernel-map slope (prob per point)
@@ -133,17 +141,20 @@ def fit_logit(X: np.ndarray, y: np.ndarray, C: float, w: np.ndarray | None = Non
     return m
 
 
-def market_walk_forward(d: pd.DataFrame, seasons: list[int], cfg: dict, train_from: int = 2006,
+def market_walk_forward(d: pd.DataFrame, seasons: list[int], cfg: dict, train_from: int | None = None,
                         kernel_from: int = 1999) -> pd.DataFrame:
     """Walk-forward market-only p_home for each season in `seasons` (fit on seasons < S)."""
     out = []
     feats = list(cfg["features"])
+    train_from = cfg.get("train_from", 2006) if train_from is None else train_from
     for S in seasons:
         kmask = (d["season"].values >= kernel_from) & (d["season"].values < S)
         f = market_features(d, kmask, cfg)
         tr = (d["season"].values >= train_from) & (d["season"].values < S) & d["played"].values & ~d["tie"].values
         te = d["season"].values == S
-        m = fit_logit(f.loc[tr, feats].values, d.loc[tr, "hw"].values, cfg["C"])
+        hl = cfg.get("half_life")
+        w = None if not hl else 0.5 ** ((S - 1 - d.loc[tr, "season"].values) / hl)
+        m = fit_logit(f.loc[tr, feats].values, d.loc[tr, "hw"].values, cfg["C"], w)
         p = m.predict_proba(f.loc[te, feats].values)[:, 1]
         o = d.loc[te, ["game_id", "season", "week", "spread"]].copy()
         o["p_home"] = p
