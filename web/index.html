@@ -2,304 +2,185 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NFL Turnover Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>NFL Picks</title>
+  <meta name="description" content="Weekly NFL picks: straight-up winners and against-the-spread picks from a stacked model ensemble, with the data behind every pick.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0A1020" media="(prefers-color-scheme: dark)">
+  <script>
+    // apply a saved theme before first paint (no flash)
+    try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 26 26%22%3E%3Cellipse cx=%2213%22 cy=%2213%22 rx=%2211.5%22 ry=%227.2%22 transform=%22rotate(-35 13 13)%22 fill=%22%231059FC%22/%3E%3Cpath d=%22M9.6 16.4 16.4 9.6%22 stroke=%22white%22 stroke-width=%221.4%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="top-sentinel" class="tb-sentinel"></div>
+  <a class="skip" href="#main">Skip to picks</a>
   <header class="site-header glass-bar" id="site-header">
     <div class="wrap header-row">
       <div class="brand">
-        <h1>NFL <span class="mark">Turnover</span> Tracker</h1>
-        <p class="sub" id="updated">Loading data…</p>
+        <svg class="brand-ball" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><ellipse cx="13" cy="13" rx="11.5" ry="7.2" transform="rotate(-35 13 13)" fill="currentColor"/><path d="M9.6 16.4 16.4 9.6M10.9 11.8l1.5 1.5M12.3 10.4l1.5 1.5M13.6 13.1l1.5 1.5" stroke="var(--bg)" stroke-width="1.2" stroke-linecap="round"/></svg>
+        <div>
+          <h1>NFL <span class="mark">Picks</span></h1>
+          <p class="sub" id="updated">Loading…</p>
+        </div>
       </div>
-      <div class="tabs-scroll">
-        <nav class="seg tabs" id="tabs" role="tablist" aria-label="Views">
-          <button role="tab" data-view="under" aria-selected="true">1H Under</button>
-          <button role="tab" data-view="league" aria-selected="false">League</button>
-          <button role="tab" data-view="matchup" aria-selected="false">Matchup</button>
-          <button role="tab" data-view="ats" aria-selected="false"><span class="tab-long">vs Spread</span><span class="tab-short">ATS</span></button>
-          <button role="tab" data-view="spots" aria-selected="false">Spots</button>
-          <button role="tab" data-view="kicks" aria-selected="false">Kicks</button>
+      <div class="header-actions">
+        <nav class="seg" id="tabs" role="tablist" aria-label="Sections">
+          <button role="tab" id="tab-picks" data-view="picks" aria-selected="true" aria-controls="view-picks">Picks</button>
+          <button role="tab" id="tab-models" data-view="models" aria-selected="false" aria-controls="view-models">Models</button>
         </nav>
+        <button class="icon-btn" id="theme-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <svg class="i-moon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          <svg class="i-sun" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
     </div>
   </header>
 
-  <main class="wrap">
-    <div id="tb-sentinel" class="tb-sentinel"></div>
-    <div class="toolbar-wrap" id="tb-wrap">
-      <section class="toolbar" id="toolbar" aria-label="Filters">
-        <div class="filters">
-          <label><span>Season</span> <select id="f-season"></select></label>
-          <label><span>Games</span>
-            <select id="f-type">
-              <option value="REG">Regular season</option>
-              <option value="POST">Playoffs</option>
-              <option value="ALL">All games</option>
-            </select>
-          </label>
-          <label><span>Span</span>
-            <select id="f-span">
-              <option value="0">Full season</option>
-              <option value="3">Last 3 games</option>
-              <option value="5">Last 5 games</option>
-              <option value="8">Last 8 games</option>
-            </select>
-          </label>
-          <label><span>Venue</span>
-            <select id="f-venue">
-              <option value="all">Home &amp; away</option>
-              <option value="home">Home only</option>
-              <option value="away">Away only</option>
-            </select>
-          </label>
-        </div>
-        <div class="seg" id="mode-seg" role="group" aria-label="Stat mode">
-          <button data-mode="pg" aria-pressed="true">Per game</button>
-          <button data-mode="tot" aria-pressed="false">Totals</button>
-        </div>
-        <span class="tb-ctx" id="tb-ctx" aria-hidden="true"></span>
-      </section>
-    </div>
-
-    <section id="upcoming-wrap" hidden>
-      <h2 class="section-title" id="upcoming-title">Upcoming games</h2>
-      <div id="upcoming" class="upcoming list"></div>
-    </section>
-
-    <section id="view-under" class="view">
-      <div class="card">
-        <div class="weeks-head">
-          <select id="under-season" aria-label="Season"></select>
-          <span id="under-record" class="muted"></span>
-        </div>
-        <div id="under-weeks" class="weeks" role="group" aria-label="Week"></div>
-        <h3 class="card-title" id="under-title">First-half under 24.5</h3>
-        <p class="card-sub" id="under-lede"></p>
-        <div class="chart-legend"><span><i class="dotk"></i>Week's top 3</span><span><i class="dotk g"></i>Other games</span>
-          <span class="muted">Dashed lines: break-even for under 24.5 at that price</span></div>
-        <div id="under-chart" class="chart"></div>
-      </div>
-      <div class="more">
-        <button class="more-btn" aria-expanded="false">Show how this was tested <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
-          <div id="under-tiles" class="tiles"></div>
-          <p id="under-notes" class="lede"></p>
-          <div class="card">
-            <h3 class="card-title">Calibration</h3>
-            <p class="card-sub">When the model said X%, how often was it 24 or fewer at half? Every season was predicted by a fit on earlier seasons only.</p>
-            <div class="table-scroll"><table id="under-cal" class="stats cal"></table></div>
-          </div>
-        </div></div></div>
-      </div>
-    </section>
-
-    <section id="view-league" class="view" hidden>
-      <div class="two-up">
-        <div class="card">
-          <h3 class="card-title">Who wins the turnover battle</h3>
-          <p class="card-sub">Takeaways vs giveaways per game. Bottom-right teams take the ball away and protect it.</p>
-          <div id="league-to-chart" class="chart"></div>
-        </div>
-        <div class="card">
-          <h3 class="card-title">Fumble luck</h3>
-          <p class="card-sub">Fumble recoveries are close to a coin flip. Bottom-right teams have won more than their share of loose balls on both sides and tend to come back to earth.</p>
-          <div id="league-fum-chart" class="chart"></div>
-        </div>
-      </div>
-      <div class="more ">
-        <button class="more-btn" aria-expanded="false">Show full table <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
-          <div class="table-scroll">
-            <table id="league" class="stats"><thead></thead><tbody></tbody></table>
-          </div>
-          <p class="note">
-            <b>Takeaways</b> = interceptions made + opponent fumbles recovered.
-            <b>Giveaways</b> = interceptions thrown + fumbles lost (including special teams).
-            <b>Fum kept %</b> is the share of a team's own fumbles it recovered; <b>Opp fum rec %</b> is the share of
-            opponent fumbles the team recovered. Click a column to sort, a team to open its matchup.
-          </p>
-        </div></div></div>
-      </div>
-    </section>
-
-    <section id="view-matchup" class="view" hidden>
-      <div class="matchup-pick">
-        <label><span class="micro">Team A</span> <select id="m-a"></select></label>
-        <button id="m-swap" class="btn icon" title="Swap teams" aria-label="Swap teams">⇄</button>
-        <label><span class="micro">Team B</span> <select id="m-b"></select></label>
-      </div>
-      <div id="m-line" class="m-line"></div>
-      <div id="m-compare" class="card butterfly"></div>
-      <div id="m-edges" class="edges"></div>
-      <div class="card">
-        <h3 class="card-title">Cumulative turnover differential</h3>
-        <div id="m-legend" class="legend"></div>
-        <div id="m-chart" class="chart"></div>
-      </div>
-      <div class="more ">
-        <button class="more-btn" aria-expanded="false">Show game logs <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
-          <div class="logs">
-            <div class="card"><h3 class="card-title" id="m-log-a-title"></h3><div class="table-scroll"><table class="stats log" id="m-log-a"></table></div></div>
-            <div class="card"><h3 class="card-title" id="m-log-b-title"></h3><div class="table-scroll"><table class="stats log" id="m-log-b"></table></div></div>
-          </div>
-        </div></div></div>
-      </div>
-    </section>
-
-    <section id="view-ats" class="view" hidden>
-      <div class="ats-head">
-        <div class="seg" id="ats-sample" role="group" aria-label="Sample">
-          <button data-sample="season" aria-pressed="true">Selected season</button>
-          <button data-sample="all" id="ats-sample-all" aria-pressed="false">All seasons</button>
-        </div>
-        <span class="muted" id="ats-scope"></span>
-      </div>
-      <div id="ats-tiles" class="tiles list"></div>
-      <div class="two-up">
-        <div class="card">
-          <h3 class="card-title">Cover rate by turnover margin in the game</h3>
-          <p class="card-sub">What happened. Known only after the game.</p>
-          <div id="ats-chart-ingame" class="chart"></div>
-        </div>
-        <div class="card">
-          <h3 class="card-title">Cover rate by turnover edge before kickoff</h3>
-          <p class="card-sub">What you can bet on: season turnover diff per game minus the opponent's.</p>
-          <div id="ats-chart-edge" class="chart"></div>
-        </div>
-      </div>
-      <div class="card">
-        <h3 class="card-title">Turnover margin vs covering</h3>
-        <p class="card-sub">Each team's turnover diff per game against its cover rate. Above the line covers more than half the time.</p>
-        <div id="ats-team-chart" class="chart"></div>
-      </div>
-      <div class="more ">
-        <button class="more-btn" aria-expanded="false">Show team table <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
-          <div class="table-scroll">
-            <table id="ats-table" class="stats"><thead></thead><tbody></tbody></table>
-          </div>
-          <p class="note">
-            Pushes count in the record but not in cover %. <b>Won/Even/Lost TO battle</b> splits each team's ATS record
-            by its turnover margin in that game. Break-even is about 52.4% at −110.
-          </p>
-        </div></div></div>
-      </div>
-    </section>
-
-    <section id="view-spots" class="view" hidden>
-      <div id="spots-tiles" class="tiles list"></div>
-      <p id="spots-verdict" class="lede"></p>
-      <div class="card">
-        <h3 class="card-title" id="spots-title"></h3>
-        <p class="card-sub">The longer the line, the more the model disagrees with the market. Hover a game for details; click it for the matchup.</p>
-        <div class="chart-legend"><span><i class="ring"></i>Market spread</span><span><i class="dotk"></i>Model fair line (blue = flagged)</span><span class="muted">★ both signals agree</span></div>
-        <div id="spots-chart" class="chart"></div>
-      </div>
-      <div class="more ">
-        <button class="more-btn" aria-expanded="false">Show game cards <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
-          <div id="spots" class="spots"></div>
-        </div></div></div>
-      </div>
-      <div class="more ">
-        <button class="more-btn" aria-expanded="false">Show this season's flagged games <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
-          <div class="table-scroll"><table id="spots-history" class="stats log"></table></div>
-          <p class="note">
-            <b>Power edge</b>: point differential minus 4 points per turnover of margin, blended with last season, pulled
-            toward average, plus 1.5 for home field, compared to the spread (3+ points flags a lean).
-            <b>Turnover fade</b>: backs the team whose turnover margin is much worse than its opponent's.
-            Lines are nflverse's as of the 8am ET refresh, so compare with your book's current number.
-          </p>
-        </div></div></div>
-      </div>
-    </section>
-
-    <section id="view-kicks" class="view" hidden>
-      <div id="kicks-tiles" class="tiles list"></div>
-      <p id="kicks-verdict" class="lede"></p>
-
-      <div id="kicks-board-wrap" class="card">
-        <h3 class="card-title" id="kicks-title"></h3>
-        <p class="card-sub">Projected field goals made for each kicker this week. Hover a row for fair odds on over 1.5; click it for the matchup.</p>
-        <div class="chart-legend"><span><i class="dotk"></i>Flagged</span><span><i class="dotk g"></i>Not flagged</span><span class="muted">Label: projected FGs made · chance of 2+</span></div>
-        <div id="kicks-chart" class="chart"></div>
-        <button id="kicks-all" class="btn" style="margin-top:6px" hidden></button>
-      <div class="more inner">
-        <button class="more-btn" aria-expanded="false">Show full board <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
-          <div class="table-scroll"><table id="kicks-board" class="stats kick-board"><thead></thead><tbody></tbody></table></div>
-        </div></div></div>
-      </div>
-      </div>
-
-      <div class="two-up">
-        <div class="card">
-          <h3 class="card-title">Offenses: get deep, then stall</h3>
-          <p class="card-sub">Trips inside the opponent's 40 per game against the share of red-zone trips that end in a
-            touchdown. The shaded corner moves the ball but settles for field goals.</p>
-          <div id="kicks-off-chart" class="chart"></div>
-        </div>
-        <div class="card">
-          <h3 class="card-title">Defenses: bend, don't break</h3>
-          <p class="card-sub">Trips inside the 40 allowed per game against the red-zone TD rate allowed. The shaded corner
-            gives up yards but holds opponents to field goals.</p>
-          <div id="kicks-def-chart" class="chart"></div>
-        </div>
-      </div>
-      <div class="more ">
-        <button class="more-btn" aria-expanded="false">Show team tables <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
-          <div class="two-up">
-            <div class="card">
-              <h3 class="card-title">Red-zone stall offenses</h3>
-              <div class="table-scroll"><table id="kicks-off" class="stats"><thead></thead><tbody></tbody></table></div>
+  <main id="main">
+    <!-- ============ PICKS ============ -->
+    <section id="view-picks" class="view" role="tabpanel" aria-labelledby="tab-picks">
+      <div class="hero">
+        <div class="wrap">
+          <div class="hero-top">
+            <div class="hero-head">
+              <p class="eyebrow" id="season-label"></p>
+              <h2 class="hero-title" id="week-title">Picks</h2>
+              <p class="hero-sub" id="week-sub"></p>
             </div>
-            <div class="card">
-              <h3 class="card-title">Bend-don't-break defenses</h3>
-              <div class="table-scroll"><table id="kicks-def" class="stats"><thead></thead><tbody></tbody></table></div>
+            <div class="weeks-scroll" id="weeks-scroll">
+              <div class="seg weeks" id="weeks" role="group" aria-label="Week"></div>
             </div>
           </div>
-        </div></div></div>
+          <div class="tiles" id="tiles"></div>
+          <p class="bt-line" id="bt-line"></p>
+        </div>
       </div>
-      <div class="more ">
-        <button class="more-btn" aria-expanded="false">Show backtest details <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <div class="expand"><div><div class="content">
+
+      <div class="wrap">
+        <div id="tb-sentinel" class="tb-sentinel"></div>
+        <div class="toolbar-wrap" id="tb-wrap">
+          <div class="toolbar" id="toolbar">
+            <div class="seg" id="sort-seg" role="group" aria-label="Sort games">
+              <button data-sort="time" aria-pressed="true">Kickoff</button>
+              <button data-sort="conf" aria-pressed="false">Confidence</button>
+            </div>
+            <div class="seg" id="layout-seg" role="group" aria-label="Layout">
+              <button data-layout="cards" aria-pressed="true">Cards</button>
+              <button data-layout="table" aria-pressed="false">Table</button>
+            </div>
+            <span class="tb-ctx" id="tb-ctx" aria-hidden="true"></span>
+          </div>
+        </div>
+        <div id="sheet" class="sheet" aria-live="polite"></div>
+        <p class="note legend-note">
+          <b>Winner</b> is the ensemble's straight-up pick and its win probability; the tick on the bar is the betting market's.
+          <b>Spread</b> is the side the ensemble expects to cover: <b>edge</b> is how many points its projected margin differs from the line.
+          Models = how many of the individual models lean the same way as the pick. Kickoff times are Eastern.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ MODELS ============ -->
+    <section id="view-models" class="view" role="tabpanel" aria-labelledby="tab-models" hidden>
+      <div class="wrap models-wrap">
+        <div class="models-intro">
+          <p class="eyebrow">How the picks are made</p>
+          <h2 class="hero-title">Many models, one pick</h2>
+          <p class="lede" id="stack-lede"></p>
+        </div>
+        <div class="card stack-card">
+          <div class="stack" id="stack-diagram"></div>
+          <p class="card-sub stack-note" id="stack-note">
+            Each model estimates the chance the home team wins and the expected margin. The ensemble doesn't simply average them:
+            it learns, only from seasons it never trained on, how much to trust the betting market and each family of models.
+          </p>
+        </div>
+
+        <div class="two-up">
+          <div class="card">
+            <h3 class="card-title">What the ensemble listens to</h3>
+            <p class="card-sub">How much each input moves the ensemble's probabilities this season. Each bar is the input's coefficient × its typical size, on the log-odds scale. The betting market itself carries most of the weight and isn't shown.</p>
+            <div id="listen" class="listen"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">When models argue with the market</h3>
+            <p class="card-sub">2012–2025: in games where a family of models picked the other team from the betting favorite, how often the model was right. Below 50% means the market won the argument.</p>
+            <div class="table-scroll"><table class="stats dissent" id="dissent"></table></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Best bets against the spread</h3>
+          <p class="card-sub" id="bb-sub"></p>
+          <div class="table-scroll"><table class="stats" id="bestbets"></table></div>
+        </div>
+
+        <div class="tiles" id="model-tiles"></div>
+
+        <div class="card">
+          <h3 class="card-title">Leaderboard <span class="muted" id="lb-window"></span></h3>
+          <p class="card-sub">Walk-forward backtest: every season is predicted by models fit only on earlier seasons. <b>Market</b> always picks the betting favorite. Lower log loss and Brier are better. The last two columns are this season, live.</p>
+          <div class="table-scroll"><table class="stats lb" id="leaderboard"></table></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title" id="season-chart-title">Accuracy by season</h3>
+              <p class="card-sub" id="season-chart-sub">Share of games picked correctly each season.</p>
+            </div>
+            <div class="seg" id="bt-metric" role="group" aria-label="Metric">
+              <button data-metric="su" aria-pressed="true">Straight-up</button>
+              <button data-metric="ats" aria-pressed="false">Spread</button>
+            </div>
+          </div>
+          <div class="legend" id="season-legend"></div>
+          <div class="chart" id="season-chart" role="img"></div>
+        </div>
+
+        <div class="two-up">
+          <div class="card">
+            <h3 class="card-title">Accuracy by confidence</h3>
+            <p class="card-sub">Straight-up accuracy of ensemble picks at or above each win probability. Bars start at 50%, a coin flip; small numbers are games.</p>
+            <div class="chart" id="conf-chart" role="img"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Spread picks by edge</h3>
+            <p class="card-sub">Cover rate when the ensemble disagrees with the line by at least N points. Dashed line: 52.4%, the break-even rate at standard −110 odds. Lighter bars fall short of it.</p>
+            <div class="chart" id="edge-chart" role="img"></div>
+          </div>
+        </div>
+
+        <div class="two-up">
           <div class="card">
             <h3 class="card-title">Calibration</h3>
-            <p class="card-sub">How often kickers made 2+ field goals, by how many the raw projection expected.</p>
-            <div class="table-scroll"><table id="kicks-cal" class="stats cal"></table></div>
+            <p class="card-sub">When the ensemble says 70%, does the team win about 70% of the time? Points on the diagonal are perfectly calibrated; size shows how many games.</p>
+            <div class="chart" id="cal-chart" role="img"></div>
           </div>
           <div class="card">
-            <h3 class="card-title">Flagged kickers this season</h3>
-            <div class="table-scroll"><table id="kicks-history" class="stats log"></table></div>
+            <h3 class="card-title">The models</h3>
+            <div id="model-list" class="model-list"></div>
           </div>
-          <p class="note">
-            <b>Trip inside the 40</b>: a drive with a snap from the opponent's 40 or closer. <b>Red-zone TD %</b>: drives
-            with a snap inside the 20 that ended in a touchdown. <b>Stall</b> offenses reach the 40 at least as often as
-            average but score TDs on fewer red-zone trips than average; <b>Bend</b> defenses allow at least an average
-            number of trips but fewer red-zone TDs. The projection multiplies expected trips by expected field-goal tries
-            per trip and the team's make rate, using only games before kickoff; the probabilities pull it most of the way
-            back to league average because field goals are noisy. <b>Implied</b> is the team's share of the game total.
-          </p>
-        </div></div></div>
+        </div>
       </div>
     </section>
   </main>
 
-  <footer class="wrap footer">
-    Data: <a href="https://github.com/nflverse">nflverse</a> play-by-play via <code>nflreadpy</code>. Lines are nflverse's
-    consensus spread/total, refreshed every morning at 8am ET; spread shown from the favorite's side.
+  <footer class="wrap foot">
+    <p class="note">Probabilities are model estimates, not guarantees. Data: nflverse schedules, play-by-play and closing lines. For entertainment.</p>
   </footer>
 
-  <div id="tooltip" class="tooltip" role="status"></div>
+  <dialog id="detail" class="detail" aria-labelledby="detail-title">
+    <div class="detail-inner" id="detail-inner"></div>
+  </dialog>
+  <div id="tip" class="tip glass-card" role="tooltip" hidden></div>
+
   <script src="app.js"></script>
 </body>
 </html>

@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+research/cache/
+research/features/
+research/site_screens/
+research/*/work/
