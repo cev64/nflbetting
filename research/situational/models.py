@@ -192,35 +192,54 @@ def run_situational(g: pd.DataFrame, test_seasons, log=print):
 
 MLP_COLS = ["mkt_logit", "spread_line"] + [c for c in F.MARKET_FEATS if c != "mkt_logit"] + F.SITU_FEATS
 MLP_SEEDS = (0, 1, 2, 3, 4)
-MLP_CFG = dict(hidden_layer_sizes=(16, 8), alpha=1.0, learning_rate_init=1e-3, max_iter=300, early_stopping=True,
-               validation_fraction=0.15, n_iter_no_change=15)
+MLP_CFG = dict(hidden_layer_sizes=(16, 8), alpha=10.0, learning_rate_init=1e-3, max_iter=400, early_stopping=True,
+               validation_fraction=0.15, n_iter_no_change=20)
+WIN_SD = 0.47  # scale of (home_win - market prob), so both targets are ~unit variance
 
 
-def run_mlp(g: pd.DataFrame, test_seasons, cfg=None, log=print):
-    cfg = cfg or MLP_CFG
-    out = []
+def _mlp_fit_predict(tr: pd.DataFrame, te: pd.DataFrame, cols, cfg, seeds):
+    """Seed-ensembled two-output MLP regressor on market-relative targets:
+    [ (home_win - market prob) / WIN_SD , (result - spread_line) / RESID_SD ].  Returns (n_te, 2)."""
+    tr = tr[tr["home_win"].notna()]
+    sc = StandardScaler().fit(design(tr, cols))
+    X, Xt = sc.transform(design(tr, cols)), sc.transform(design(te, cols))
+    Y = np.column_stack([(tr["home_win"] - tr["mkt_prob"]) / WIN_SD, tr["resid"].clip(-35, 35) / RESID_SD])
+    preds = [MLPRegressor(random_state=s, **cfg).fit(X, Y).predict(Xt) for s in seeds]
+    return np.mean(preds, axis=0)
+
+
+def _shrink(pred, y):
+    """Least-squares slope of y on pred through the origin, clipped to [0, 1] (0 = trust the market)."""
+    v = float(pred @ pred)
+    return float(np.clip((pred @ y) / v, 0.0, 1.0)) if v > 0 else 0.0
+
+
+def run_mlp(g: pd.DataFrame, test_seasons, cfg=None, cols=None, seeds=None, n_inner: int = 3, log=print):
+    """For test season S: (1) inner fit on seasons < S-n_inner, predict S-n_inner..S-1 and learn how much to
+    trust each output (shrinkage toward the market); (2) fit on all seasons < S and predict S with that shrinkage."""
+    cfg, cols, seeds = cfg or MLP_CFG, cols or MLP_COLS, seeds or MLP_SEEDS
+    out, info = [], {}
+    base = g[(g["season"] >= FIRST_TRAIN) & g["result"].notna() & g["spread_line"].notna()]
     for S in test_seasons:
-        tr = g[(g["season"] < S) & (g["season"] >= FIRST_TRAIN) & g["result"].notna() & g["spread_line"].notna()]
+        tr = base[base["season"] < S]
         te = g[(g["season"] == S) & g["spread_line"].notna()]
         if te.empty:
             continue
-        trs = tr[tr["home_win"].notna()]
-        sc = StandardScaler().fit(design(tr, MLP_COLS))
-        Xs, Xr, Xt = sc.transform(design(trs, MLP_COLS)), sc.transform(design(tr, MLP_COLS)), sc.transform(design(te, MLP_COLS))
-        yr = (tr["resid"].clip(-35, 35) / RESID_SD).to_numpy()
-        ph, rh = [], []
-        for seed in MLP_SEEDS:
-            c = MLPClassifier(random_state=seed, **cfg).fit(Xs, trs["home_win"].astype(int))
-            ph.append(c.predict_proba(Xt)[:, 1])
-            r = MLPRegressor(random_state=seed, **cfg).fit(Xr, yr)
-            rh.append(r.predict(Xt) * RESID_SD)
-        p_home, resid_hat = np.mean(ph, axis=0), np.mean(rh, axis=0)
-        p_cover = norm.cdf(resid_hat / RESID_SD)
-        log(f"  mlp {S}: mean|resid_hat|={np.abs(resid_hat).mean():.2f}")
+        itr, iva = tr[tr["season"] < S - n_inner], tr[(tr["season"] >= S - n_inner) & tr["home_win"].notna()]
+        ip = _mlp_fit_predict(itr, iva, cols, cfg, seeds)
+        k_win = _shrink(ip[:, 0], ((iva["home_win"] - iva["mkt_prob"]) / WIN_SD).to_numpy())
+        k_cov = _shrink(ip[:, 1], (iva["resid"].clip(-35, 35) / RESID_SD).to_numpy())
+        pr = _mlp_fit_predict(tr, te, cols, cfg, seeds)
+        p_home = np.clip(te["mkt_prob"].to_numpy() + k_win * WIN_SD * pr[:, 0], 0.01, 0.99)
+        resid_hat = k_cov * RESID_SD * pr[:, 1]
+        # keep a non-degenerate cover probability even when shrinkage is 0: fall back to raw net with tiny weight
+        p_cover = norm.cdf((resid_hat + 1e-3 * RESID_SD * pr[:, 1]) / RESID_SD)
+        info[S] = dict(k_win=k_win, k_cov=k_cov)
+        log(f"  mlp {S}: k_win={k_win:.2f} k_cov={k_cov:.2f}")
         out.append(pd.DataFrame({"game_id": te["game_id"].values, "season": S, "week": te["week"].values,
                                  "p_home": p_home, "margin": te["spread_line"].values + resid_hat,
                                  "p_home_cover": p_cover}))
-    return pd.concat(out, ignore_index=True)
+    return pd.concat(out, ignore_index=True), info
 
 
 KNN_COLS = ["spread_line", "total_line_f", "rest_diff", "travel_diff", "tz_diff", "div_game", "prime",

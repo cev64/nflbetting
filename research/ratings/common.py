@@ -45,12 +45,14 @@ def _sig(z):
     return 1 / (1 + np.exp(-z))
 
 
-def walk_forward(raw: pl.DataFrame, feats: list[str], first_train: int = FIRST_TRAIN, train_window: int | None = None) -> pl.DataFrame:
+def walk_forward(raw: pl.DataFrame, feats: list[str], first_train: int = FIRST_TRAIN, train_window: int | None = None,
+                 season_half_life: float | None = None) -> pl.DataFrame:
     """For each season S >= FIRST_OUT fit on played games of seasons [first_train, S):
       * p_home:       logistic  home_win ~ 1 + feats
       * margin:       OLS       result   ~ 1 + feats
       * p_home_cover: logistic  cover    ~ 1 + (margin - spread_line)   (margin = the OLS fit above, in-sample on train)
     `feats` columns must exist in raw; spread_line may be one of them (market blend).
+    season_half_life: if set, training games are weighted 0.5^((S-1-season)/half_life) (recency weighting).
     """
     df = raw.with_columns(
         (pl.col("result") > 0).cast(pl.Float64).alias("home_win"),
@@ -67,13 +69,18 @@ def walk_forward(raw: pl.DataFrame, feats: list[str], first_train: int = FIRST_T
         Xte = np.column_stack([np.ones(te.height)] + [te[c].to_numpy() for c in feats])
         su = tr.filter(pl.col("result") != 0)
         Xsu = np.column_stack([np.ones(su.height)] + [su[c].to_numpy() for c in feats])
-        b_win = _logit_fit(Xsu, su["home_win"].to_numpy())
-        b_mar = _ols_fit(Xtr, tr["result"].to_numpy().astype(float))
+        def sw(d):
+            if season_half_life is None:
+                return np.ones(d.height)
+            return 0.5 ** ((s - 1 - d["season"].to_numpy()) / season_half_life)
+        b_win = _logit_fit(Xsu, su["home_win"].to_numpy(), sw(su))
+        wt = np.sqrt(sw(tr))
+        b_mar = _ols_fit(Xtr * wt[:, None], tr["result"].to_numpy().astype(float) * wt)
         # ATS: edge = fitted margin - line, fit on non-push training games
         ats = tr.filter((pl.col("result") - pl.col("spread_line")) != 0)
         Xa = np.column_stack([np.ones(ats.height)] + [ats[c].to_numpy() for c in feats])
         edge_tr = Xa @ b_mar - ats["spread_line"].to_numpy()
-        b_cov = _logit_fit(np.column_stack([np.ones(len(edge_tr)), edge_tr]), ats["cover"].to_numpy())
+        b_cov = _logit_fit(np.column_stack([np.ones(len(edge_tr)), edge_tr]), ats["cover"].to_numpy(), sw(ats))
         m_te = Xte @ b_mar
         out.append(pl.DataFrame({
             "game_id": te["game_id"], "season": te["season"], "week": te["week"],
