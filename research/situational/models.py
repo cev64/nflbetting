@@ -1,9 +1,12 @@
 """Walk-forward models on market + situational features.
 
-situational : regularised logistic regression (SU) + separate logistic regression for the cover, whose
-              features are chosen by an era-stability screen run inside each training window only.
-mlp         : small sklearn MLPs (seed ensemble) for P(home win) and for the residual result - spread_line.
-knn         : similar-games model (k nearest neighbours in a standardised situational space).
+situational : SU = logistic regression with the market logit as an unpenalised input plus L2-penalised situational
+              features that pass an era-stability screen; cover = separate L2 logistic regression on a fixed
+              spread-structure prior + screened market/situational/angle features.  Screens and penalties are
+              computed inside each training window only.
+mlp         : seed-ensembled two-output sklearn MLPRegressor on market-relative targets (home_win - market prob,
+              result - spread_line), with the amount of trust in each output learnt on an inner time holdout.
+knn         : similar-games model (k nearest neighbours in a standardised market/situational space).
 
 For test season S every model is fit on seasons 1999..S-1 only (all hyper-parameters are either fixed a priori
 or tuned by rolling-origin validation inside 1999..S-1).
@@ -15,7 +18,7 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import norm
 from sklearn.neighbors import NearestNeighbors
-from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
 import angles
@@ -154,9 +157,11 @@ SU_POOL = [c for c in F.MARKET_FEATS if c != "mkt_logit"] + F.SITU_FEATS
 LAMS = [10.0, 30.0, 100.0, 300.0, 1000.0, 3000.0, 10000.0]
 
 
-def run_situational(g: pd.DataFrame, test_seasons, log=print):
+def run_situational(g: pd.DataFrame, test_seasons, su_mode: str = "screen", ats_mode: str = "prior+screen", log=print):
+    """su_mode : 'screen' (market offset + screened situational features) | 'market' (market offset only)
+    ats_mode: 'screen' | 'prior+screen' (always-on spread-structure columns + screened) | 'prior'."""
     g, ang_cols = add_angle_columns(g)
-    ats_pool = SU_POOL + ang_cols
+    ats_pool = [c for c in SU_POOL + ang_cols if c not in PRIOR_COLS]
     out, chosen = [], {}
     for S in test_seasons:
         tr = g[(g["season"] < S) & (g["season"] >= FIRST_TRAIN) & g["result"].notna() & g["spread_line"].notna()]
@@ -165,24 +170,26 @@ def run_situational(g: pd.DataFrame, test_seasons, log=print):
             continue
         # --- SU: unpenalised market logit offset + stability-screened situational features (L2, tuned)
         trs = tr[tr["home_win"].notna()]
-        su_sel = screen_su_features(trs, SU_POOL) or ["neutral"]
+        su_sel = (screen_su_features(trs, SU_POOL) if su_mode == "screen" else []) or ["neutral"]
         lam_su = tune_lam(trs, su_sel, "home_win", LAMS)
         sc = StandardScaler().fit(design(trs, su_sel))
         w = fit_plogit(sc.transform(design(trs, su_sel)), trs["home_win"].to_numpy(), trs["mkt_logit"].to_numpy(), lam_su)
         p_home = pred_plogit(w, sc.transform(design(te, su_sel)), te["mkt_logit"].to_numpy())
-        # --- ATS: stability-screened features only, no market offset (cover is already market-relative)
-        sel = select_ats_features(tr, ats_pool)
+        # --- ATS: no market offset (cover is already market-relative)
+        sel = select_ats_features(tr, ats_pool) if ats_mode != "prior" else []
+        if ats_mode != "screen":
+            sel = PRIOR_COLS + sel
         trc = tr[tr["home_cover"].notna()]
         if sel:
             lam_c = tune_lam(trc, sel, "home_cover", LAMS, use_off=False)
             scc = StandardScaler().fit(design(trc, sel))
             wc = fit_plogit(scc.transform(design(trc, sel)), trc["home_cover"].to_numpy(), np.zeros(len(trc)), lam_c)
             p_cover = pred_plogit(wc, scc.transform(design(te, sel)), np.zeros(len(te)))
-            coefs = dict(zip(sel, wc[2:]))
+            coefs = dict(zip(sel, wc[2:] / scc.scale_))
         else:
             lam_c, p_cover, coefs = None, np.full(len(te), 0.5), {}
         resid_hat = norm.ppf(np.clip(p_cover, 0.01, 0.99)) * RESID_SD
-        chosen[S] = dict(su=dict(zip(su_sel, w[2:])), su_mkt_slope=w[1], lam_su=lam_su, ats=coefs, lam_ats=lam_c)
+        chosen[S] = dict(su=dict(zip(su_sel, w[2:] / sc.scale_)), su_mkt_slope=w[1], lam_su=lam_su, ats=coefs, lam_ats=lam_c)
         log(f"  situational {S}: su={su_sel} lam={lam_su} | ats({len(sel)}) lam={lam_c}")
         out.append(pd.DataFrame({"game_id": te["game_id"].values, "season": S, "week": te["week"].values,
                                  "p_home": p_home, "margin": te["spread_line"].values + resid_hat,
@@ -273,14 +280,12 @@ def run_knn(g: pd.DataFrame, test_seasons, log=print):
         sc = Std(KNN_COLS, KNN_W).fit(design(tr, KNN_COLS))
         nn = NearestNeighbors(n_neighbors=KNN_K).fit(sc.transform(design(tr, KNN_COLS)))
         dist, idx = nn.kneighbors(sc.transform(design(te, KNN_COLS)))
-        res = tr["resid"].clip(-30, 30).to_numpy()[idx]
         hw = tr["home_win"].fillna(0.5).to_numpy()[idx]
         hc = tr["home_cover"].fillna(0.5).to_numpy()[idx]
         w = 1.0 / (1.0 + dist)
-        resid_hat = (res * w).sum(1) / w.sum(1)
-        # shrink: neighbour sets are noisy, pull 60% back toward market
-        resid_hat *= 0.4
+        # neighbours' cover rate, shrunk 60% toward a coin flip (neighbour sets are noisy)
         p_cover = 0.5 + 0.4 * ((hc * w).sum(1) / w.sum(1) - 0.5)
+        resid_hat = norm.ppf(p_cover) * RESID_SD
         mkt = te["mkt_prob"].to_numpy()
         p_nb = (hw * w).sum(1) / w.sum(1)
         p_home = np.clip(0.5 * mkt + 0.5 * p_nb + 0.0, 0.01, 0.99)

@@ -268,8 +268,8 @@ TEAM_FEATS = [
 ]
 
 
-def build() -> pd.DataFrame:
-    s = load_schedule()
+def build(sched: pd.DataFrame | None = None) -> pd.DataFrame:
+    s = load_schedule() if sched is None else sched
     tg = _team_long(s)
     home_info = _team_home_info(s)
     tg = _schedule_features(tg, home_info)
