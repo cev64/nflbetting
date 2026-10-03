@@ -456,7 +456,11 @@ const fmtML = (x) => (isNum(x) ? (x > 0 ? "+" : MINUS) + Math.abs(x) : "—");
 function factorsTable(g) {
   const fs = Array.isArray(g.factors) ? g.factors.filter((f) => f && (f.label || f.key)) : [];
   if (!fs.length) return `<div class="d-sec"><p class="d-sec-title">Data behind the pick</p><div class="empty">No factor data for this game yet.</div></div>`;
-  let hw = 0, aw = 0;
+  let hw = 0, aw = 0, lastGroup = null;
+  const cell = (v, txt, f) => {
+    const num = isNum(v) ? `<span>${fmtVal(v, f.fmt)}</span>` : "";
+    return txt ? `${num}<small class="ftxt">${esc(txt)}</small>` : num || `<span class="muted">—</span>`;
+  };
   const rows = fs.map((f) => {
     const h = f.home, a = f.away;
     let better = null;
@@ -465,13 +469,15 @@ function factorsTable(g) {
       better === "home" ? hw++ : aw++;
     }
     const lab = esc(f.label || f.key) + (f.better === "low" ? ' <span class="muted" title="lower is better">↓</span>' : "");
-    return `<tr><td class="v ${better === "away" ? "better" : ""}"><span>${fmtVal(a, f.fmt)}</span></td><td class="lab">${lab}</td><td class="v ${better === "home" ? "better" : ""}"><span>${fmtVal(h, f.fmt)}</span></td></tr>`;
+    let head = "";
+    if (f.group && f.group !== lastGroup) { lastGroup = f.group; head = `<tr class="fgroup"><th colspan="3">${esc(f.group)}</th></tr>`; }
+    return `${head}<tr><td class="v ${better === "away" ? "better" : ""}">${cell(a, f.away_text, f)}</td><td class="lab">${lab}</td><td class="v ${better === "home" ? "better" : ""}">${cell(h, f.home_text, f)}</td></tr>`;
   }).join("");
   const n = hw + aw;
   const sum = n ? (hw === aw ? `Even split, ${hw}–${aw}` : `${hw > aw ? g.home : g.away} better in ${Math.max(hw, aw)} of ${n}`) : "";
   return `<div class="d-sec"><p class="d-sec-title">Data behind the pick <span>${esc(sum)}</span></p>
     <table class="ftable"><thead><tr><th>${logo(g.away, "sm", 22)}${esc(g.away)}</th><th>Factor</th><th>${logo(g.home, "sm", 22)}${esc(g.home)}</th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="note">Highlighted = the better side for that factor. ↓ means lower is better. Listed in order of importance to the models.</p>
+    <p class="note">Highlighted = the better side for that factor. ↓ means lower is better. Every value is what was known before kickoff.</p>
   </div>`;
 }
 
