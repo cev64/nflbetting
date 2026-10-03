@@ -31,29 +31,39 @@ from games import TEAM_FEATS  # noqa: E402
 TARGETS = [(2011, 9), (2015, 12), (2019, 10), (2023, 15), (2025, 3)]
 
 
+def _truncated_features(season: int, week: int, cut, cal, ptab):
+    inp = R.build_inputs(asof=cut)
+    # pre-game tables: keep only charts / reports of games up to the target week
+    upto = inp["tg"].filter((pl.col("season") < season) | ((pl.col("season") == season) & (pl.col("week") <= week)))
+    inp["dc"] = inp["dc"].join(upto.select("game_id"), on="game_id", how="semi")
+    inp["inj"] = inp["inj"].join(upto.select("game_id"), on="game_id", how="semi")
+    feat, *_ = R.build_features(inp, cal=cal, ptab=ptab)
+    return feat
+
+
 def truncation_test() -> None:
+    """Cut all outcome data at a kickoff time T and compare features of every game played on T's calendar date.
+    Ratings use games with date < kickoff date, so these must match the full build exactly. (Games on later
+    days of the same week may legitimately use the earlier same-week games, e.g. Thursday's.)"""
+    import json
     full = pl.read_parquet(D.WORK / "team_features.parquet")
     ptab = pl.read_parquet(D.WORK / "p_play_table.parquet")
-    import json
     cal = {tuple(k.split("|")): tuple(v) for k, v in json.load(open(D.WORK / "calibration.json")).items()}
     s = D.schedules()
     for season, week in TARGETS:
         wk = s.filter((pl.col("season") == season) & (pl.col("week") == week))
-        cut = wk["kick"].min()
-        inp = R.build_inputs(asof=cut)
-        # pre-game tables: keep only charts / reports of games up to the target week
-        upto = inp["tg"].filter((pl.col("season") < season) | ((pl.col("season") == season) & (pl.col("week") <= week)))
-        inp["dc"] = inp["dc"].join(upto.select("game_id"), on="game_id", how="semi")
-        inp["inj"] = inp["inj"].join(upto.select("game_id"), on="game_id", how="semi")
-        inp["tg"] = inp["tg"].with_columns(  # later games' starters unknown
-            pl.when(pl.col("kick") >= cut).then(pl.when(pl.col("game_id").is_in(wk["game_id"].implode()))
-                                                .then(pl.col("qb_id"))).otherwise(pl.col("qb_id")).alias("qb_id"))
-        feat, *_ = R.build_features(inp, cal=cal, ptab=ptab)
-        a = feat.filter(pl.col("game_id").is_in(wk["game_id"].implode())).sort("game_id", "team")
-        b = full.filter(pl.col("game_id").is_in(wk["game_id"].implode())).sort("game_id", "team")
-        cols = [c for c in TEAM_FEATS if c in a.columns]
-        diff = np.nanmax(np.abs(a.select(cols).to_numpy().astype(float) - b.select(cols).to_numpy().astype(float)))
-        print(f"truncation {season} wk{week}: {a.height} team-games, max |diff| over {len(cols)} features = {diff:.2e}")
+        for which, sub in (("first slot", wk), ("Sunday", wk.filter(pl.col("weekday") == "Sunday"))):
+            cut = sub["kick"].min()
+            ids = wk.filter(pl.col("date") == sub.filter(pl.col("kick") == cut)["date"][0])["game_id"]
+            feat = _truncated_features(season, week, cut, cal, ptab)
+            a = feat.filter(pl.col("game_id").is_in(ids.implode())).sort("game_id", "team")
+            b = full.filter(pl.col("game_id").is_in(ids.implode())).sort("game_id", "team")
+            cols = [c for c in TEAM_FEATS if c in a.columns]
+            x, y = a.select(cols).to_numpy().astype(float), b.select(cols).to_numpy().astype(float)
+            diff = np.nanmax(np.abs(x - y))
+            nan_mismatch = int((np.isnan(x) != np.isnan(y)).sum())
+            print(f"truncation {season} wk{week} ({which}, cut {cut}): {a.height} team-games, "
+                  f"max |diff| over {len(cols)} features = {diff:.2e}, null mismatches {nan_mismatch}")
 
 
 def depth_timing_test() -> None:

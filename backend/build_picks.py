@@ -58,6 +58,12 @@ MODELS = [
      "A small neural network (5 seeds averaged) predicting how far the result lands from what the market implies."),
     ("knn", "Similar games", "situational",
      "The 300 most similar past games: how often the home side won and covered."),
+    ("wave2_roster_nomkt", "Player lineup", "roster",
+     "Bottom-up: every expected starter rated from his own play-by-play production, summed by unit (QB, receivers, line, pass rush, coverage, kicker). No betting line."),
+    ("wave2_roster", "Lineup + line", "roster",
+     "The betting line adjusted for the expected lineup: injury cost by unit and lineup changes vs recent weeks."),
+    ("wave2_close", "Close-game specialist", "closegames",
+     "Market-only probability, plus a specialist for games within 3.5 points (coach 4th-down aggressiveness and experience)."),
 ]
 
 # The data behind each pick: (group, source model file, feature, better, fmt) -- better/fmt override the file's.
@@ -82,9 +88,18 @@ FACTORS = [
     ("QB & health", "elo", "qb_adj", "high", "+0.0"),
     ("QB & health", "personnel", "inj_starters_out", None, None),
     ("QB & health", "personnel", "key_absences", None, None),
+    ("Lineup", "wave2_roster", "U_rec", None, None),
+    ("Lineup", "wave2_roster", "U_rush", None, None),
+    ("Lineup", "wave2_roster", "U_olexp", None, None),
+    ("Lineup", "wave2_roster", "U_prush", None, None),
+    ("Lineup", "wave2_roster", "U_cover", None, None),
+    ("Lineup", "wave2_roster", "inj_off", None, None),
+    ("Lineup", "wave2_roster", "inj_def", None, None),
+    ("Lineup", "wave2_close", "kicker_fgoe", None, None),
     ("Situation", "situational", "rest", None, None),
     ("Situation", "situational", "travel_km", None, None),
     ("Situation", "situational", "tz_shift", None, None),
+    ("Situation", "wave2_close", "coach_go4", None, None),
 ]
 
 

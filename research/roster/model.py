@@ -38,7 +38,7 @@ FEATURE_SETS = {
 
 
 def _xy(df: pl.DataFrame, feats: list[str]) -> np.ndarray:
-    return df.select([pl.col(f).cast(pl.Float64).fill_null(0.0) for f in feats]).to_numpy()
+    return df.select([pl.col(f).cast(pl.Float64).fill_nan(None).fill_null(0.0) for f in feats]).to_numpy()
 
 
 class Std:

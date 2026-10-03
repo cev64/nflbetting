@@ -10,6 +10,7 @@ Each model family lives in research/<family>/run.py and writes research/preds/<m
 from __future__ import annotations
 
 import argparse
+import resource
 import subprocess
 import sys
 import time
@@ -26,7 +27,8 @@ def run(cmd: list[str]) -> None:
     t = time.time()
     print("$", " ".join(cmd), flush=True)
     subprocess.run(cmd, cwd=ROOT, check=True)
-    print(f"  done in {time.time() - t:.0f}s", flush=True)
+    peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1e6
+    print(f"  done in {time.time() - t:.0f}s (peak memory so far {peak:.1f} GB)", flush=True)
 
 
 def main() -> None:

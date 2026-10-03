@@ -146,7 +146,8 @@ def build(tg: pl.DataFrame, dc: pl.DataFrame, inj: pl.DataFrame, plog: pl.DataFr
     Qp = qprev.join(qv, on=["gsis_id", "date", "season"], how="left").group_by("game_id", "team").agg(
         pl.col("qb_epa").mean().alias("qb_epa_prev6"))
     # ---- kicker
-    kc = dc.filter((pl.col("grp") == "K")).sort("depth").unique(["game_id", "team"], keep="first").select(
+    kc = dc.filter((pl.col("grp") == "K")).sort("game_id", "team", "depth", "gsis_id").unique(
+        ["game_id", "team"], keep="first", maintain_order=True).select(
         "game_id", "team", "gsis_id")
     kk = tgx.select("game_id", "team", "fr", "date", "kick").join(kc, on=["game_id", "team"], how="left")
     kv = kick_values(kk.filter(pl.col("gsis_id").is_not_null()).select("gsis_id", "date"), kl)

@@ -631,7 +631,7 @@ function renderModels() {
 const FAMILY_LABEL = {
   efficiency: "Efficiency models (no line)", efficiency_mkt: "Efficiency + line", personnel: "Lineup model (no line)",
   personnel_mkt: "QB & injuries + line", ratings: "Rating models (no line)", ratings_mkt: "Ratings + line",
-  situational: "Situational, neural net, similar games", market: "Market",
+  situational: "Situational, neural net, similar games", market: "Market", roster: "Player lineup", closegames: "Close games",
 };
 const ATS_LABEL = {
   home_dog: "Home underdog", spread: "Size of the spread", playoff_dog_home: "Playoff home underdog",

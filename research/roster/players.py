@@ -173,7 +173,8 @@ def calibrate(pl_log: pl.DataFrame, seasons=(2013, 2017)) -> dict:
     K = split-half (odd/even games) reliability within player-seasons with >= 8 full games: K = n_half (1-r)/r.
     """
     x = pl_log.filter(pl.col("season").is_between(*seasons) & (pl.col("fge") > 0.05))
-    x = x.with_columns(pl.col("date").rank("ordinal").over("gsis_id", "season").alias("k"))
+    x = x.sort("gsis_id", "season", "date", "game_id", "team").with_columns(
+        pl.int_range(pl.len()).over("gsis_id", "season").alias("k"))
     out = {}
     for m, grps in APPLIES.items():
         for gp in grps:
@@ -183,7 +184,8 @@ def calibrate(pl_log: pl.DataFrame, seasons=(2013, 2017)) -> dict:
             repl = float(rep["v"].sum() / max(rep["f"].sum(), 1e-9))
             half = y.with_columns((pl.col("k") % 2).alias("h")).group_by("gsis_id", "season", "h").agg(
                 pl.col("fge").sum().alias("f"), pl.col(m).sum().alias("v"))
-            wide = half.pivot(on="h", index=["gsis_id", "season"], values=["f", "v"]).drop_nulls()
+            wide = half.pivot(on="h", index=["gsis_id", "season"], values=["f", "v"]).drop_nulls().sort(
+                "gsis_id", "season")
             wide = wide.filter((pl.col("f_0") >= 4) & (pl.col("f_1") >= 4))
             r0 = (wide["v_0"] / wide["f_0"]).to_numpy()
             r1 = (wide["v_1"] / wide["f_1"]).to_numpy()
@@ -198,7 +200,8 @@ def calibrate(pl_log: pl.DataFrame, seasons=(2013, 2017)) -> dict:
 def _decayed_state(log: pl.DataFrame, cols: list[str], hl: float, key="gsis_id") -> pl.DataFrame:
     """Per player-game row: decayed cumulative sums (scaled by 2**(t/hl)); query must rescale by 2**(-D/hl)."""
     w = (2.0 ** (_days() / hl))
-    return log.sort(key, "date").with_columns(
+    log = log.group_by(key, "date").agg([pl.col(c).sum() for c in cols]).sort(key, "date")
+    return log.with_columns(
         [(pl.col(c) * w).cum_sum().over(key).alias(f"S_{c}") for c in cols]
         + [pl.col("date").alias("last_date")])
 

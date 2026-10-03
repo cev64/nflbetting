@@ -117,12 +117,14 @@ def snaps(s: pl.DataFrame | None = None) -> pl.DataFrame:
         s = schedules()
     sc = pl.read_parquet(CACHE / "snap_counts.parquet").with_columns(nm_expr("player").alias("nm"))
     r = rosters()
-    by_pfr = r.filter(pl.col("pfr_id").is_not_null()).group_by("pfr_id").agg(pl.col("gsis_id").mode().first())
+    by_pfr = (r.filter(pl.col("pfr_id").is_not_null()).group_by("pfr_id", "gsis_id").len()
+              .sort("pfr_id", "len", "gsis_id", descending=[False, True, False]).unique("pfr_id", keep="first")
+              .select("pfr_id", "gsis_id"))
     rr = r.with_columns(nm_expr("full_name").alias("nm"))
     by_nts = rr.group_by("nm", "team", "season").agg(pl.col("gsis_id").n_unique().alias("k"),
-                                                     pl.col("gsis_id").first().alias("g2")).filter(pl.col("k") == 1)
+                                                     pl.col("gsis_id").min().alias("g2")).filter(pl.col("k") == 1)
     by_ns = rr.group_by("nm", "season").agg(pl.col("gsis_id").n_unique().alias("k"),
-                                            pl.col("gsis_id").first().alias("g3")).filter(pl.col("k") == 1)
+                                            pl.col("gsis_id").min().alias("g3")).filter(pl.col("k") == 1)
     sc = (sc.join(by_pfr, left_on="pfr_player_id", right_on="pfr_id", how="left")
           .join(by_nts.drop("k"), on=["nm", "team", "season"], how="left")
           .join(by_ns.drop("k"), on=["nm", "season"], how="left"))
@@ -134,7 +136,8 @@ def snaps(s: pl.DataFrame | None = None) -> pl.DataFrame:
                          (pl.col("defense_pct").fill_null(0)).alias("def_pct"),
                          (pl.col("st_pct").fill_null(0)).alias("st_pct"))
     return sc.select("game_id", "season", "week", "team", "gsis_id", "player", "position", "grp",
-                     "off_pct", "def_pct", "st_pct").unique(["game_id", "gsis_id"], keep="first")
+                     "off_pct", "def_pct", "st_pct").sort("game_id", "gsis_id", "off_pct", "def_pct", descending=[False, False, True, True]
+                                        ).unique(["game_id", "gsis_id"], keep="first", maintain_order=True)
 
 
 # ---------------------------------------------------------------- depth charts
@@ -157,8 +160,8 @@ def depth_charts(tg: pl.DataFrame) -> pl.DataFrame:
     old = old.filter(pl.col("grp").is_not_null()).select(
         "season", "week", pl.col("club_code").alias("team"), "gsis_id", "grp", "depth", "unit")
     old = old.join(tg.select("game_id", "season", "week", "team"), on=["season", "week", "team"], how="inner")
-    old = old.group_by("game_id", "team", "gsis_id").agg(pl.col("depth").min(), pl.col("grp").sort_by("depth").first(),
-                                                         pl.col("unit").sort_by("depth").first())
+    old = old.group_by("game_id", "team", "gsis_id").agg(pl.col("depth").min(), pl.col("grp").sort_by(["depth", "grp"]).first(),
+                                                         pl.col("unit").sort_by(["depth", "grp"]).first())
     # new format
     new = d.filter(pl.col("season").is_null() & pl.col("dt").is_not_null()).with_columns(
         pl.col("dt").str.to_datetime("%Y-%m-%dT%H:%M:%SZ", time_zone="UTC").alias("ts"))
@@ -177,9 +180,10 @@ def depth_charts(tg: pl.DataFrame) -> pl.DataFrame:
                          strategy="backward", allow_exact_matches=False).filter(pl.col("snap_ts").is_not_null())
     nn = new.join(pick.select("game_id", "team", pl.col("snap_ts").alias("ts")), on=["team", "ts"], how="inner")
     nn = nn.with_columns(pl.col("pos_rank").cast(pl.Int32).alias("depth"))
-    nn = nn.group_by("game_id", "team", "gsis_id").agg(pl.col("depth").min(), pl.col("grp").sort_by("depth").first(),
-                                                       pl.col("unit").sort_by("depth").first())
-    return pl.concat([old, nn.select(old.columns)]).unique(["game_id", "team", "gsis_id"])
+    nn = nn.group_by("game_id", "team", "gsis_id").agg(pl.col("depth").min(), pl.col("grp").sort_by(["depth", "grp"]).first(),
+                                                       pl.col("unit").sort_by(["depth", "grp"]).first())
+    return pl.concat([old, nn.select(old.columns)]).sort("game_id", "team", "gsis_id", "depth").unique(
+        ["game_id", "team", "gsis_id"], keep="first", maintain_order=True)
 
 
 # ---------------------------------------------------------------- injuries
@@ -226,6 +230,7 @@ def injuries(tg: pl.DataFrame) -> pl.DataFrame:
         pl.struct("report_status", "practice_status").map_elements(
             lambda r: _p_miss(r["report_status"], r["practice_status"]), return_dtype=pl.Float64).alias("p_miss"),
         pg_expr("position").alias("inj_grp"))
-    return (inj.sort("p_miss", descending=True).unique(["game_id", "team", "gsis_id"], keep="first")
+    return (inj.sort("game_id", "team", "gsis_id", "p_miss", descending=[False, False, False, True])
+            .unique(["game_id", "team", "gsis_id"], keep="first", maintain_order=True)
             .select("game_id", "team", "gsis_id", "full_name", "position", "inj_grp", "report_status",
                     "practice_status", "p_miss", "stale"))

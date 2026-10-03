@@ -120,7 +120,7 @@ def main(report: bool = False) -> None:
     preds = {}
     for mid, (kind, fs) in MODELS.items():
         pred, recs = M.walk_forward(g, M.FEATURE_SETS[fs], kind, tests)
-        pred = pred.sort("season", "week", "game_id")
+        pred = pred.sort("season", "week", "game_id").with_columns(pl.col("p_home", "margin", "p_home_cover").round(6))
         pred.write_csv(D.PREDS / f"{mid}.csv")
         with open(D.WORK / f"{mid}_coefs.json", "w") as fh:
             json.dump(recs, fh, indent=1)

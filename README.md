@@ -1,190 +1,121 @@
-# NFL Turnover Tracker
+# NFL Picks
 
-Turnover, spread and field-goal prop metrics for NFL betting, built on free [nflverse](https://github.com/nflverse) data.
+A weekly NFL picks sheet. Every game gets a **straight-up winner** and an **against-the-spread** pick from a stacked
+ensemble of 18 models. The site shows the data behind every pick and how each model compares. It is built on free
+[nflverse](https://github.com/nflverse) data and refreshed every morning.
 
-- **Backend** (`backend/`): a Python script that pulls play-by-play and schedules with
-  [`nflreadpy`](https://github.com/nflverse/nflreadpy) and writes per-team game logs to `web/data/*.json`.
-- **Website** (`web/`): a static site with no build step that reads those JSON files and shows the tables and comparisons.
-- **Automation** (`.github/workflows/update-data.yml`): refreshes the current season every morning at 8am ET
-  (for the latest lines), commits the new data, and (optionally) publishes the site to GitHub Pages.
+- **Website** (`web/`): static, no build step. It reads one file, `web/data/picks.json`.
+  - **Picks:** the week's games with logos, the winner and spread picks, win and cover probabilities, how many models
+    agree, and best bets. Played games show ✓/✗.
+  - **Data behind the pick:** for each game, the ensemble against the market, every model's probability, and about
+    30 inputs grouped as Market, Team strength, Efficiency, QB & health, Lineup and Situation (QB names and injured
+    starters included). It also shows form, the line and the weather.
+  - **Models:** the leaderboard, accuracy by season, accuracy by confidence, spread record by edge, calibration,
+    what the ensemble listens to, how often models that argue with the market are right, and the best-bet record.
+- **Models** (`research/<family>/run.py`): each family writes walk-forward predictions to `research/preds/*.csv`.
+- **Pipeline** (`backend/pipeline.py`): fetch data → run every family → meta-model → `backend/build_picks.py` → `picks.json`.
+- **Automation** (`.github/workflows/update-data.yml`): runs the pipeline every morning at 8am ET (plus Tuesday 10am
+  ET for Monday night's play-by-play), commits `picks.json` and deploys to GitHub Pages. A full run takes about 5
+  minutes with a 5 GB memory peak.
 
-## What it shows
+## How good is it? (honest numbers)
 
-**League table**: every team's takeaways (INT made + fumbles recovered), giveaways (INT thrown + fumbles lost),
-and turnover differential, per game or as totals. The table is sortable and shaded against the league average.
-It also has two fumble-luck columns:
+Every number below is **walk-forward and out of sample**: each season is predicted by models fit only on earlier
+seasons, using only information available before kickoff. `research/eval.py` scores every model the same way.
 
-- *Fum kept %*: the share of a team's own fumbles it recovered.
-- *Opp fum rec %*: the share of opponent fumbles it recovered.
+| 2012–2025 (3,816 games) | Straight-up | Against the spread | Log loss |
+|---|---|---|---|
+| **Ensemble** (the picks) | **66.4%** | **51.4%** | **0.609** |
+| Betting favorite (market) | 66.4% | 50.9% | 0.611 |
+| Best single model with the line (`wave2_roster`, `situational`) | 66.5% | 49–51% | 0.609–0.610 |
+| Best model without the line (`elo`) | 65.4% | 50.2% | 0.624 |
 
-Fumble recoveries are close to a coin flip, so a team well above or below 50% is a regression candidate.
+- **By season** the ensemble ranged from 62.3% (2021) to 70.7% (2013). It was 70.5% in 2024 and 67.5% over 2022–2025.
+- **Confidence tracks accuracy:** picks at 60%+ win probability hit 71%, at 70%+ 80%, and at 80%+ 87%.
+- **Best bets** are spread picks where the ensemble's edge over the line is at least 2 points. They have covered more
+  than the 52.4% break-even in every era:
 
-**vs Spread**: turnover margin against covering the spread (nflverse spread lines).
-- Cover rate when a team won, tied, or lost the turnover battle.
-- Cover rate by the game's final turnover margin (−3 or worse through +3 or better).
-- Cover rate by the *entering-the-game* turnover edge: the team's season-to-date TO diff/game minus its opponent's.
-  This is the one you can actually bet on.
-- Per-team ATS record, cover %, average cover margin, and ATS record split by won/even/lost turnover battle.
-- Switch between the selected season and all loaded seasons pooled together.
-
-ATS records and each game's line and cover margin also appear in the league table, the matchup view, and the game logs.
-
-**Spots**: automatic spread signals for the upcoming week's games (`backend/model.py`).
-- *Power edge*: each team's point differential minus 4 points per turnover of margin, blended with last season,
-  pulled toward average, plus 1.5 points for home field. It gives a model "fair line"; a gap of 3+ points from the
-  market flags a lean.
-- *Turnover fade*: when one team's turnover diff/game is 1.0+ better than its opponent's (both with 3+ games),
-  it leans on the worse-turnover team, betting on regression.
-- *Both agree*: both signals point at the same team.
-
-Every signal is backtested on all seasons on disk (2021–2025) and tracked live in the current season. The site
-shows those records beside the picks. **So far none of them beats the 52.4% needed at −110.** They're all near
-50%, because the spread already prices in turnover luck. Treat them as a screen, not as bets.
-
-**1H Under** (the default tab, regular season only): one chart ranking the week's games by the chance they're **24 or fewer at
-halftime**, for first-half under 24.5 bets (`backend/firsthalf.py`). Each row shows that chance, the fair (no-vig)
-price, and dashed break-even lines for −150, −200 and −250; bet only when your book's under 24.5 price beats fair.
-- Playoff games are left out of the fit, the backtest, the lookback and the weekly board.
-- A week strip above the chart looks back at every regular-season week since 2022: three dots per week show whether that
-  week's top 3 went under (green) or over (red). Click a week to see its chart with each game's actual halftime
-  points; pick a season from the menu. Ties in the top 3 go to the earlier kickoff.
-- Halftime scores come from play-by-play (the running score at the end of the first half, so defensive and return
-  scores, PATs and two-point tries are included). Final scores from the same field match nflverse's schedule.
-- Projection = a + b × the full-game total; the chance of 24 or fewer comes from how far real halftime totals
-  landed from past projections (not an assumed Poisson/normal shape). Each season is predicted by a fit on earlier
-  seasons only.
-- Each team's first-half points scored and allowed were tested as a second input and **didn't improve the forecast**:
-  the market's total already reflects them. They're shown in each game's tooltip as context.
-- 2022–2025 regular seasons: 64% of games were 24 or fewer at half (693 of 1,087); the week's top 3 by the model,
-  74% (160 of 216).
-  The probabilities are well calibrated (the "Show how this was tested" panel).
-- **Not tested: profit.** nflverse has no first-half odds, so this can't show whether betting the under made money
-  at the prices actually offered. An odds feed (e.g. The Odds API's `totals_h1` / `alternate_totals_h1`) would allow that.
-
-**Kicks**: field-goal props, built on drive and red-zone data (`backend/kicks.py`). The idea is that FG props are
-priced mostly off the game total, so an offense that **moves the ball but stalls in the red zone**, facing a defense
-that **bends but doesn't break**, should kick more field goals than its total suggests.
-- Two scatter charts (offenses and defenses): trips inside the opponent's 40 per game against red-zone TD %, with the
-  "drives but kicks" corner shaded. Team tables rank every offense by a *stall score* and every defense by a
-  *bend score* (trips above average minus red-zone TD % above average, in standard deviations). Both follow the filters.
-- A weekly board with one row per kicker: projected trips inside the 40 × projected field-goal tries per trip × the
-  team's make rate, P(2+ FGs made) with fair no-vig odds for over 1.5, and projected kicker points with P(8+).
-- A backtest on every season on disk, compared with how often kickers actually made 2+ field goals and with a
-  "total-only" price that just scales the league FG rate by the team's implied points:
-
-  | 2021–2025, regular season | team-games | made 2+ FGs |
+  | Seasons | Best-bet record | Cover rate |
   |---|---|---|
-  | Every kicker | 2,718 | 51.1% |
-  | Stall offense × bend defense | 115 | 50.4% |
-  | Projection 2.0+ FGs made | 412 | 57.8% (total-only price: 50.6%) |
+  | 2007–2011 | 134-119 | 53.0% |
+  | 2012–2017 | 44-26 | 62.9% |
+  | 2018–2025 (holdout) | 58-45 | 56.3% |
 
-  The plain stall × bend matchup found nothing. The trips × tries-per-trip projection did better, but over 1.5 is
-  often juiced (54.5% break-even at −120, 58.3% at −140), so it only pays where your book's price is short.
-  Field goals are noisy: a one-FG gap in the raw projection showed up as only about 0.2 FGs in results, so the
-  displayed probabilities shrink the projection toward league average by that fitted slope (`CAL_SLOPE`, fitted
-  in-sample on 2021–2025). The flag uses the raw projection and isn't affected by that fit.
+  That is only about 13 games a season, so treat best bets as a lean, not a lock.
 
-### Where the betting lines come from
+### Why not 68% straight-up?
 
-Spreads and totals come from nflverse's schedule data (`nflreadpy.load_schedules()`, from the `games` dataset
-maintained in [nflverse/nfldata](https://github.com/nflverse/nfldata)). Its docs don't say which sportsbook the
-lines come from, so treat them as a market consensus. For upcoming games, the line is whatever nflverse had
-at the last refresh (every morning at 8am ET). The site is only as fresh as nflverse's file, which is not a live odds
-feed, so check your own book's current number against the model's fair line.
+The target was 68% straight-up. Eight research agents built about 20 models and an ensemble to chase it, and **none
+reached it honestly.** The closing betting line already contains almost everything public data can say:
 
-**Upcoming games**: the next week's slate with the spread, the total, and each team's turnover diff per game.
-Click a game to open the matchup.
+- **What was tried.** Elo with QB adjustments, Kalman and ridge power ratings, about 50 opponent-adjusted
+  play-by-play efficiency stats with gradient boosting, QB value models, snap-weighted injury reports, player-by-player
+  lineup ratings, rest, travel, body clock, weather, referees, coaching, a neural net, a similar-games model and a
+  close-game specialist. **Every model that sees the line lands within ±0.2 points of the betting favorite; models that don't are 1–3 points worse.**
+- **Overruling the favorite loses.** When a model that doesn't see the line picks against the favorite, it is right
+  only 42–48% of the time, even in pick'em games. The ensemble learned this on 2010–2017. It was frozen before 2018–2025
+  was scored and confirmed on those seasons, so its winner pick stays with the favorite. The models set the probability
+  and drive the spread picks.
+- **The ceiling.** A model that knows exactly what the market knows should expect about **66.7%** over 2012–2025. A
+  68% *season* happens by luck about a third of the time; the favorite alone did it in 2013, 2017 and 2024. A 68%
+  *average* over 14 seasons has a 4% chance by luck. It would take a model that knows about 3 points per game the
+  closing line doesn't price, which would also be worth about 57% against the spread. A backtest showing 68% over many
+  seasons almost always means the model peeked at the future (leakage).
 
-**Matchup**: two teams side by side with league ranks, plus:
-- Team A's offense (giveaways) vs Team B's defense (takeaways), and the reverse.
-- A simple projected turnover margin.
-- A cumulative turnover-differential chart.
-- Both teams' game logs.
+The research notes, with every model, test and dead end, are in `research/*/NOTES.md`. The ceiling analysis is in
+`research/closegames/NOTES.md`.
 
-**Filters**: season, regular season/playoffs, full season or last 3/5/8 games, and home/away splits.
+## The models
 
-### Weekly data cutoff
+| Family | Models (`research/preds/<id>.csv`) | Idea |
+|---|---|---|
+| Ratings | `elo`, `kalman`, `ratings_ridge`, `ratings_combo` (+ `_mkt` blends) | Team strength from results: 538-style Elo with QB/rest/travel adjustments, a week-to-week Kalman filter, opponent-adjusted margin and EPA ratings |
+| Efficiency | `logit_epa`, `logit_epa_mkt`, `gbm`, `xgb_margin` | ~50 point-in-time, opponent-adjusted, recency-weighted play-by-play stats (EPA/play, success rate, pressure, turnover luck, special teams…) → logistic regression, LightGBM, XGBoost |
+| Personnel | `personnel`, `personnel_nomkt`, `personnel_ats` | Starting-QB value (EPA + CPOE, shrunk, followed across teams), QB changes, snap-weighted injury load by position group from pre-game injury reports |
+| Situational | `situational`, `mlp`, `knn` | Market structure (moneyline vs spread, implied totals), rest, travel, body clock, revenge, referee and more; a 5-seed neural net; a similar-games model |
+| Roster | `wave2_roster`, `wave2_roster_nomkt` | Bottom-up: every expected starter rated from his own production, summed by unit, with injury cost and lineup changes |
+| Close games | `wave2_market`, `wave2_close` | The sharpest market-only probability (spread + juice, recency-weighted) and a close-game specialist |
+| **Meta** | **`ensemble`** | The models "talking to each other": an L2 logistic stack on the market plus each family's disagreement with it, fit walk-forward. A separate ATS stack uses each family's cover lean, the injury gap and underdog structure |
 
-Data only goes through the last *fully completed* week. A Thursday night game isn't added until that whole week
-is final on Monday night, so every team through week N has the same games (bye weeks aside). The site's header
-shows "through week N", and the upcoming-games strip shows the next week's slate. Thursday games already played
-show their final score there.
-
-### How turnovers are counted
-
-From nflverse play-by-play:
-- An interception is charged to the offense.
-- A lost fumble is charged to the team that fumbled. That covers punt and kick returners, and a defender who
-  fumbles an interception return back to the offense.
-
-The 2025 totals match nflverse's official team stats (380 INTs, 248 of 249 lost fumbles).
+The meta-model picks its base models with a rule fixed in advance on development seasons only
+(`research/meta/select_models.py`). The 18 first-round models qualify. The second-round models (`wave2_*`) are shown on
+the site for comparison but didn't improve the development seasons, so they aren't in the stack.
 
 ## Run it locally
 
 ```bash
 pip install -r backend/requirements.txt
 
-python backend/fetch_data.py               # current season
-python backend/fetch_data.py --since 2021  # backfill 2021 through the current season
-python backend/fetch_data.py --seasons 2024 2025
-python backend/fetch_data.py --model-only  # rebuild model.json (spots + kicks) from the data on disk
+python backend/pipeline.py              # download data (~3 min, ~350 MB in research/cache/), run all models, build picks.json
+python backend/pipeline.py --quick      # refresh only the current season of the big datasets
+python backend/pipeline.py --no-fetch   # rerun the models on the cached data
+python research/eval.py research/preds/ensemble.csv research/preds/elo.csv   # score any model
 
-python -m http.server 8000 -d web          # then open http://localhost:8000
+python -m http.server 8000 -d web       # then open http://localhost:8000
 ```
 
-The site has to be served over HTTP, because opening `index.html` directly blocks the JSON fetch.
+The site has to be served over HTTP; opening `index.html` directly blocks the JSON fetch.
 
-## Hosting / auto-updates
+To add a model, write `research/<family>/run.py` that emits `research/preds/<id>.csv` with
+`game_id, season, week, p_home, margin[, p_home_cover]` for every game since 2006, plus the upcoming slate. Follow the
+rules in `research/PROTOCOL.md` (no leakage, walk-forward, score with `eval.py`). Add the family to
+`backend/pipeline.py` and the model to `MODELS` in `backend/build_picks.py`.
 
-The site lives in `web/`, so GitHub Pages must deploy it with the workflow. "Deploy from a branch" won't work:
-that only serves the repo root or `/docs`, and at the root you just get this README.
+## Hosting
 
 1. **Settings → Pages → Build and deployment → Source**: choose **GitHub Actions**.
-2. **Actions → Update NFL data → Run workflow** (on the default branch) to fetch the data and deploy.
-   It also redeploys on any push that changes `web/`, and runs on its own every morning at 8am ET
-   (plus Tuesday at 14:00 UTC, 10am EDT / 9am EST, in case Monday night's play-by-play was late). GitHub cron runs in UTC with no daylight
-   saving, so the workflow schedules both 12:00 and 13:00 UTC and skips whichever one isn't 8am in New York.
-   Scheduled runs can start several minutes late when GitHub is busy.
+2. **Actions → Update NFL picks → Run workflow** on the default branch. The workflow also redeploys on any push that
+   changes `web/`. Cron runs in UTC, so it schedules both 12:00 and 13:00 UTC and keeps whichever is 8am in New York.
 3. Open `https://<user>.github.io/<repo>/`.
 
-Scheduled runs and Pages deployments only happen on the repo's default branch.
+## Data
 
-## Design
+- **Source:** nflverse via `nflreadpy`. That covers schedules and closing lines (`spread_line`: positive means the
+  home team is favored), moneylines, starting QBs, weather, play-by-play from 1999, player stats, pre-game injury
+  reports, depth charts, snap counts and FTN charting.
+- **Lines:** nflverse doesn't say which sportsbook its lines come from, so treat them as a market consensus. For
+  upcoming games the line is whatever nflverse had at the last refresh, so check your own book's number.
+- **Logos:** `web/logos/<TEAM>.png`. The Rams (`LA`) fall back to the ESPN logo.
+- **Contract:** `research/SITE_SCHEMA.md` describes `picks.json`.
 
-The site follows a "fluid glass" style: a bright white surface with navy ink, Inter for text and Barlow Condensed
-for headings, and glass only on floating layers (the sticky header, the filter bar once it pins, and tooltips).
-Each tab leads with one or two simple charts (team-logo scatters, a market-vs-model dumbbell for spreads, a dot plot
-of projected field goals per kicker, mirrored bars for matchups); the full tables, game logs and method notes sit
-behind "Show …" toggles. Tabs and toggles use a pill that glides to the selection. When a table re-sorts or the filters change, rows slide to
-their new place, washing green if they moved up and red if they moved down. All motion is off under
-`prefers-reduced-motion`.
-
-## Logos
-
-`web/logos/<TEAM>.png` holds the primary logos from the Uniform Lab pack, resized to 128px. The Rams (`LA`)
-weren't in the pack, so the site falls back to nflverse's logo URL for any team without a local file. To add
-one, drop in `web/logos/LA.png`.
-
-## Data format
-
-`web/data/<season>.json` has one record per team per game:
-
-| field | meaning |
-|---|---|
-| `week`, `type`, `date`, `team`, `opp`, `home`, `pf`, `pa` | game info from the team's point of view (`type` is REG/WC/DIV/CON/SB) |
-| `line` | the team's spread from nflverse (negative = favored); it covered if `pf - pa + line > 0` |
-| `total` | the game's over/under from nflverse |
-| `h1_pf`, `h1_pa` | first-half points for and against (null if the game has no play-by-play) |
-| `int_thrown`, `fum_lost`, `fumbles` | giveaways, plus total fumbles (lost or not) |
-| `int_made`, `fum_rec`, `opp_fumbles` | takeaways, plus total opponent fumbles |
-| `drives`, `t40`, `rz`, `rz_td`, `td` | offense: drives, trips inside the 40 and the 20 (a snap from there), red-zone TDs, TD drives |
-| `fga`, `fgm`, `fg50`, `xpa`, `xpm` | offense: field goals tried / made / made from 50+, extra points tried / made |
-| `opp_` + any of the ten above | the same, for the opponent's offense (what this team's defense allowed) |
-
-`model.json` holds the spread signals: backtest and live records per signal, graded flags for the
-current season, and `spots` for the upcoming week. Its `first_half` key holds the under 24.5 backtest,
-calibration, every predicted game by season (`history`) and the weekly `board`; its `kicks` key holds the kicking backtest, calibration
-tiers, this season's graded flags, and the weekly `board`.
-
-`upcoming` lists the games in the week after the published data, with `spread_line` (positive = home favored),
-`total_line`, and the score if it has already been played.
+Probabilities are model estimates, not guarantees. For entertainment.
